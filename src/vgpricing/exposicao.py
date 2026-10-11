@@ -96,8 +96,9 @@ def experiencia(detalhe: pd.DataFrame, sinistros: pd.DataFrame | None, estipulan
         soma_c2q=("soma_c2q", "sum"))
     if sinistros is not None and len(sinistros):
         s = sinistros_por_ano(sinistros, estipulantes, data_referencia)
-        if "setor" in por and "setor" not in s.columns:
-            s = s.merge(estipulantes[["id_estipulante", "setor"]], on="id_estipulante")
+        extras = [c for c in por if c not in s.columns and c in estipulantes.columns]
+        if extras:
+            s = s.merge(estipulantes[["id_estipulante", *extras]], on="id_estipulante")
         obs = s.groupby(por, as_index=False).agg(
             obitos_observados=("id_sinistro", "count"), valor_observado=("valor_incorrido", "sum"))
         agg = agg.merge(obs, on=por, how="left")

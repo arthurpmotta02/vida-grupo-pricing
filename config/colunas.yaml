@@ -2,7 +2,8 @@
 # Para usar a base interna, troque apenas os valores da direita.
 estipulantes:
   id_estipulante: id_estipulante
-  setor: setor
+  cnae_secao: cnae_secao
+  cnae_divisao: cnae_divisao
   data_inicio_vigencia: data_inicio_vigencia
   data_fim_vigencia: data_fim_vigencia
   tipo_capital: tipo_capital

@@ -22,27 +22,36 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 
 ## Status
 
-- [x] **Etapa 1: dados.** Leitura (Excel, CSV ou parquet) com mapeamento de colunas; 26 regras de
+- [x] **Etapa 1: dados.** Leitura (Excel, CSV ou parquet) com mapeamento de colunas; 27 regras de
   qualidade com log auditável; exposição em vidas-ano e capital-ano; óbitos e valores esperados; número
   efetivo de óbitos ponderado por capital; conciliação de prêmio; gerador sintético.
-- [x] **Etapa 2: taxa manual.** A/E sobre a BR-EMSmt 2026 com efeito aleatório de estipulante
-  (Poisson-Gama, verossimilhança exata, Bayes empírico), comparado com GLM, Binomial Negativa e ridge.
-  Setor e faixa de capital são fatores de tarifa obrigatórios, estimados com encolhimento calibrado
-  por validação cruzada; idade, sexo e porte só entram com evidência estatística. Estudo de simulação
-  com 12 carteiras; tabela versionada em `artefatos/fatores_manual.yaml`; taxa pura para um censo.
-- [ ] Etapa 3: renovação (Bühlmann-Straub, pooling de sinistros grandes, IBNR, regra por faixa)
-- [ ] Etapa 4: camada bayesiana (PyMC)
-- [ ] Etapa 5: validação e backtest
-- [ ] Cotador, relatório Quarto e checklist de governança
+- [x] **Etapa 2: taxa manual.** GLMM de Poisson estimado no R com **glmmTMB** (conferido com lme4):
+  offset dos óbitos esperados pela BR-EMSmt 2026, log do capital, seção CNAE como efeito fixo, divisão
+  CNAE e estipulante como efeitos aleatórios (estrutura de Ohlsson para fatores com muitos níveis).
+  Idade, sexo e porte só entram com evidência (razão de verossimilhança com correção de Holm).
+  Tabela de fatores versionada em `artefatos/fatores_manual.yaml` e taxa pura para um censo de vidas.
+- [ ] Etapa 3: renovação. IBNR (chainladder), pooling formal com encargo, credibilidade de mercado
+  (flutuação limitada) contra Bühlmann-Straub (`actuar::cm`) e modelo misto, escolha por backtest,
+  comparação com a regra contratual por faixa de sinistralidade.
+- [ ] Etapa 4: diagnóstico com machine learning (LightGBM Poisson sobre o resíduo da taxa manual, SHAP).
+  Só aponta interações candidatas; não entra na tarifa.
+- [ ] Etapa 5: camada bayesiana (mesmo modelo com prioris; propaga a incerteza da variância entre grupos).
+- [ ] Etapa 6: validação por backtest fora do tempo e cenários em que as hipóteses do modelo falham.
+- [ ] Etapa 7: cotador (carregamentos, retenção, concentração). Etapa 8: relatório Quarto e governança.
 
 ## Como rodar
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 77 testes (1 só roda com o arquivo oficial da SUSEP presente)
+Rscript r/instalar_pacotes.R             # R >= 4.2 com glmmTMB, lme4, jsonlite, actuar
+pytest                                   # testes do GLMM e da tábua oficial são pulados se faltar R/arquivo
 jupyter lab                              # rode notebooks/01_dados e depois 02_taxa_manual
-python scripts/estudo_simulacao_manual.py   # opcional (~8 min): refaz o estudo de simulação
 ```
+
+**Por que R.** glmmTMB e lme4 são as implementações de referência de modelos mistos, e a literatura
+atuarial de credibilidade com modelos mistos usa R. O Python organiza os dados e chama o R por
+`Rscript` (arquivos CSV/JSON, sem rpy2). O cotador só lê a tabela de fatores: **cotar não exige R**,
+estimar exige. Em Ubuntu, os pacotes existem no apt (`r-cran-glmmtmb`, `r-cran-lme4`, `r-cran-actuar`).
 
 **Tábua.** O pipeline usa a BR-EMSmt 2026 oficial, lida direto do arquivo publicado pela SUSEP e
 travada por hash. Na primeira execução, se o arquivo não estiver em `data/external/`, o código baixa
@@ -69,13 +78,21 @@ se os nomes de coluna forem outros.
   os fatores previu grupos novos pior que a própria tábua, e o intervalo de 95% dele acertou só ~80% das
   vezes. O modelo com efeito de grupo e fatores selecionados previu melhor e teve cobertura de ~94%.
   Além disso, ele estima o k de credibilidade usado na renovação.
-- **Como um fator entra na tabela de preço?** Setor e faixa de capital entram por decisão de negócio,
-  com encolhimento (com pouca evidência, o fator fica perto de 1). Os demais só com teste de razão de
-  verossimilhança a 5%. No estudo, a seleção só por p-valor foi instável (a mesma regra escolheu
-  estruturas diferentes em carteiras com as mesmas hipóteses), e a abordagem adotada teve o menor
-  subsídio cruzado entre grupos e a melhor previsão de grupos novos.
-- **O k é bayesiano?** É Bayes empírico: estimado por máxima verossimilhança e tratado como conhecido.
-  A incerteza do k entra no preço na Etapa 4 (bayesiano completo).
+- **Por que um modelo misto, e não um GLM comum?** Células do mesmo grupo não são independentes. O GLM
+  trata cada uma como informação nova e produz intervalos estreitos demais. O modelo misto separa o
+  efeito da atividade do efeito do grupo; credibilidade e modelos mistos são a mesma teoria (CAS
+  Monograph 14). Na previsão de grupos novos, GLM e modelo misto empatam; a diferença está na incerteza.
+- **Como a atividade entra?** Seção CNAE como fator fixo e divisão como efeito aleatório dentro da seção:
+  cada divisão recebe credibilidade em torno da sua seção (Ohlsson, 2008). Seções com pouca exposição
+  vão para "OUTRAS".
+- **Como um fator entra na tabela de preço?** Atividade e capital por decisão de negócio, tomada antes de
+  olhar os dados. Idade, sexo e porte só com razão de verossimilhança, corrigida por Holm para testes
+  múltiplos (sem a correção, o porte entraria por acaso).
+- **Grupo novo tem fator 1?** Não: com efeito Normal na escala log, o fator esperado de um grupo
+  desconhecido é exp(σ²/2). A tabela já inclui essa correção.
+- **Quanto confiar na variância entre grupos?** Pouco, com o volume da carteira sintética (mediana de 3
+  óbitos por grupo): o intervalo é largo e aparece no notebook. A camada bayesiana (Etapa 5) propaga
+  essa incerteza para o preço.
 - **O pipeline corrige dados sozinho?** Não. Toda exclusão ou sinalização vai para o log de exceções,
   com a regra e a linha de origem.
 
@@ -83,10 +100,9 @@ se os nomes de coluna forem outros.
 
 ```
 config/      parâmetros versionados (tábua, regras de validação, mapeamento, hipóteses do sintético)
-src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, manual
+src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, glmm (ponte com o R), manual
+r/           scripts R (ajuste do GLMM, instalação de pacotes)
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador)
-resultados/  estudo de simulação da taxa manual
-scripts/     estudos que demoram mais que um notebook
 notebooks/   narrativa de cada etapa (só chama funções testadas)
 tests/       pytest: casos calculados à mão + prova de detecção da sujeira injetada
 templates/   Excel de entrada

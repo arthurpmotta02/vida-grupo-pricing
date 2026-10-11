@@ -1,30 +1,28 @@
-# Etapa 2: taxa manual. Faixas e escolhas de modelagem.
+# Etapa 2: taxa manual (GLMM no R, glmmTMB). Toda escolha que muda número está aqui.
 
 meses_maturacao: 12        # experiência só até data_referencia - 12 meses (evita IBNR na estimação)
+capital_referencia: 50000  # capital em que o fator de capital vale 1
 
-faixas:
+faixas:                    # usadas para formar células e para os fatores candidatos
   idade:   {limites: [0, 30, 40, 50, 60, 200], rotulos: ["ate29", "30-39", "40-49", "50-59", "60+"]}
   capital: {limites: [0, 30000, 60000, 150000, 400000, .inf],
             rotulos: ["ate30k", "30-60k", "60-150k", "150-400k", "acima400k"]}
   tamanho: {limites: [0, 100, 500, 2000, .inf], rotulos: ["ate99", "100-499", "500-1999", "2000+"]}
 
-# Fatores do modelo. O nível base de cada um é o de maior exposição (escolhido nos dados).
-fatores: ["faixa_idade", "sexo", "setor", "faixa_capital", "faixa_tamanho"]
+modelo:
+  # Decisão de negócio, tomada antes de olhar os dados: capital (contínuo, em log) e atividade
+  # sempre entram. Estrutura de Ohlsson (2008): o fator de poucos níveis (seção CNAE) é FIXO; o de
+  # muitos níveis (divisão dentro da seção) é ALEATÓRIO, ou seja, credibilidade para cada divisão
+  # em torno da sua seção. O efeito de estipulante captura a heterogeneidade entre grupos.
+  # (Com seção também aleatória, a variância entre ~10 seções é mal identificada e tende a zero.)
+  fixos_obrigatorios: ["log_capital_c", "cnae_secao"]
+  aleatorios: ["(1|cnae_secao:cnae_divisao)", "(1|id_estipulante)"]
+  # Candidatos: entram só com evidência (razão de verossimilhança com correção de Holm para
+  # testes múltiplos). Idade e sexo já estão na tábua; o teste mede o desvio adicional.
+  fixos_candidatos: ["faixa_idade", "sexo", "faixa_tamanho"]
+  alfa: 0.05
+  # Seções com menos óbitos esperados que isso são agrupadas em "OUTRAS" (sem experiência para
+  # um fator próprio).
+  min_esperados_secao: 30
 
-ridge:
-  lambdas: [0.0, 1, 3, 10, 30, 100, 300]   # candidatos; escolha por validação cruzada por grupo
-  folds: 5
-semente_cv: 2026
-
-# Fatores de tarifa por decisão de negócio (prática de mercado em vida em grupo):
-# - setor/atividade: fator padrão de subscrição em vida e AP;
-# - faixa de capital: a mortalidade cai com o capital e o prêmio é em R$; retirar o fator por falta de
-#   poder estatístico cria subsídio cruzado entre grupos.
-# Ficam no modelo independentemente de p-valor, mas ESTIMADOS COM ENCOLHIMENTO para o nível base
-# (equivale a credibilidade por nível): com pouca evidência, o fator fica perto de 1.
-# Os demais fatores (idade, sexo, porte) só entram com evidência estatística (LR, 5%).
-fatores_obrigatorios: ["setor", "faixa_capital"]
-encolhimento:
-  lambdas: [0.0, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000]
-  folds: 5
-alfa_selecao: 0.05
+validacao_cruzada: {folds: 5, semente: 2026}

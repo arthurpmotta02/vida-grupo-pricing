@@ -1,9 +1,11 @@
 """Gerador de carteira sintética de Vida em Grupo com verdade conhecida.
 
 O que é simulado (todos os parâmetros em config/sintetico.yaml, rotulados como hipóteses):
-- estipulantes de 30 a 5.000 vidas, 3 a 5 anos de histórico, setor e efeito de grupo;
+- estipulantes de 30 a 5.000 vidas, 3 a 5 anos de histórico, atividade (CNAE seção/divisão) e
+  efeito de grupo;
 - vidas com entradas, saídas (rotatividade), envelhecimento e mudança de capital;
-- óbitos com hazard = q_x(tábua) × fator do setor × fator do grupo;
+- óbitos com hazard = q_x(tábua) × fator da seção × fator da divisão × fator do grupo
+  × gradiente de renda;
 - eventos catastróficos (várias mortes na mesma data em um grupo);
 - atraso de aviso (gera IBNR na data de referência), sinistros negados e pendentes;
 - prêmio histórico com taxa manual e reajuste anual pela regra contratual por faixa;
@@ -34,15 +36,15 @@ def _reajuste_faixa(sinistralidade: float, faixas: list[dict]) -> float:
 class _Grupo:
     """Estado de um estipulante durante a simulação."""
 
-    def __init__(self, rng, cfg, setor, tipo_cap):
-        self.rng, self.cfg, self.setor, self.tipo_cap = rng, cfg, setor, tipo_cap
+    def __init__(self, rng, cfg, secao, tipo_cap):
+        self.rng, self.cfg, self.secao, self.tipo_cap = rng, cfg, secao, tipo_cap
         c = cfg["capital"]
         self.valor_uniforme = rng.choice(c["uniforme_valores"])
         self.multiplo = rng.choice(c["multiplos"])
         self.prox_id = 0
 
     def novas(self, k: int, data_entrada: np.ndarray) -> dict:
-        rng, cfg, s = self.rng, self.cfg, self.cfg["setores"][self.setor]
+        rng, cfg, s = self.rng, self.cfg, self.cfg["secoes"][self.secao]
         ci = cfg["idade"]
         idade = np.clip(rng.normal(s["idade_media"], ci["sd"], k), ci["min_entrada"], ci["max_entrada"])
         nasc = data_entrada - (idade * DIA_ANO).astype("timedelta64[D]")
@@ -80,9 +82,12 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
     rng = np.random.default_rng(cfg["semente"])
     data_ref = np.datetime64(cfg["data_referencia"], "D")
     ref_ts = pd.Timestamp(cfg["data_referencia"])
-    setores = list(cfg["setores"])
-    pesos = np.array([cfg["setores"][s]["peso"] for s in setores], dtype=float)
+    secoes = list(cfg["secoes"])
+    pesos = np.array([cfg["secoes"][s]["peso"] for s in secoes], dtype=float)
     pesos /= pesos.sum()
+    sd = cfg["sigma_divisao"]
+    fator_div = {(sec, d): float(np.exp(rng.normal(-sd ** 2 / 2, sd)))
+                 for sec in secoes for d in cfg["secoes"][sec]["divisoes"]}
     tipos = list(cfg["capital"]["tipos"])
     p_tipos = np.array([cfg["capital"]["tipos"][t] for t in tipos], dtype=float)
     p_tipos /= p_tipos.sum()
@@ -94,16 +99,19 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
     n_sin = 0
     for e in range(cfg["n_estipulantes"]):
         eid = f"EST{e:04d}"
-        setor = setores[rng.choice(len(setores), p=pesos)]
+        secao = secoes[rng.choice(len(secoes), p=pesos)]
+        divs = cfg["secoes"][secao]["divisoes"]
+        divisao = divs[rng.integers(len(divs))]
         tipo = tipos[rng.choice(len(tipos), p=p_tipos)]
         n_anos = int(rng.integers(cfg["anos_historico"][0], cfg["anos_historico"][1] + 1))
         mes = int(rng.integers(1, 13))
         inicio = pd.Timestamp(ref_ts.year - n_anos, mes, 1)
         tamanho = int(round(np.exp(rng.uniform(np.log(cfg["tamanho"]["min"]), np.log(cfg["tamanho"]["max"])))))
         f_grupo = float(np.exp(rng.normal(-sig ** 2 / 2, sig)))
-        f_setor = float(cfg["setores"][setor]["fator_mortalidade"])
-        fator = f_setor * f_grupo
-        g = _Grupo(rng, cfg, setor, tipo)
+        f_secao = float(cfg["secoes"][secao]["fator_mortalidade"])
+        f_div = fator_div[(secao, divisao)]
+        fator = f_secao * f_div * f_grupo
+        g = _Grupo(rng, cfg, secao, tipo)
 
         ativos = g.novas(tamanho, np.full(tamanho, np.datetime64(inicio.date(), "D")))
         ativos["capital"] = g.capital(ativos["salario"], ativos["nivel"])
@@ -127,7 +135,7 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
                 sinistr = (avisados + cp["ibnr_regra_pct_premio"] * prem_ant) / prem_ant if prem_ant > 0 else 0.0
                 fator_reaj *= 1 + _reajuste_faixa(sinistr, cp["faixas_reajuste"])
 
-            # taxa manual sobre o censo no aniversário (tábua pura, sem setor nem grupo)
+            # taxa manual sobre o censo no aniversário (tábua pura, sem atividade nem grupo)
             idade_ps = _idade_np(ativos["nasc"], np.full(len(ativos["vid"]), ps64))
             q_ps = tabua.q(idade_ps, ativos["sexo"])
             taxa_pura_mil = 1000 * np.sum(q_ps * ativos["capital"]) / np.sum(ativos["capital"])
@@ -189,10 +197,11 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
             ativos = _filtrar(todos, fica)
             k += 1
 
-        estip.append({"id_estipulante": eid, "setor": setor, "data_inicio_vigencia": inicio,
+        estip.append({"id_estipulante": eid, "cnae_secao": secao, "cnae_divisao": divisao, "data_inicio_vigencia": inicio,
                       "data_fim_vigencia": pd.NaT, "tipo_capital": tipo,
                       "contributario": bool(rng.random() < 0.3), "taxa_vigente_mensal_mil": taxa_mensal_final})
-        verdade.append({"id_estipulante": eid, "setor": setor, "fator_setor": f_setor, "fator_grupo": f_grupo,
+        verdade.append({"id_estipulante": eid, "cnae_secao": secao, "cnae_divisao": divisao,
+                        "fator_secao": f_secao, "fator_divisao": f_div, "fator_grupo": f_grupo,
                         "fator_verdadeiro": fator, "tamanho_inicial": tamanho, "anos": n_anos, "tipo_capital": tipo})
 
     todas_pecas = pd.concat(pecas, ignore_index=True)

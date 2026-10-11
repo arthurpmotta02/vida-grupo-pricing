@@ -4,84 +4,121 @@ meta:
   tabua: BR-EMSmt-2026
   tabua_sha256: 45a1565083c77042187c1364a58d0f27d90208f140124394d179fb2b8cd70541
   corte_experiencia: '2024-12-31'
-  obitos: 1396
-  esperados_tabua: 1443.25
-  k_credibilidade: 8.6
-  k_ic95:
-  - 5.076
-  - 14.57
-  metodo_k: máxima verossimilhança marginal (Bayes empírico); incerteza do k não propagada
-  fatores_obrigatorios:
-  - setor
-  - faixa_capital
-  encolhimento_lambda:
-    setor: 30.0
-    faixa_capital: 300.0
-  selecao_demais_fatores: razão de verossimilhança, alfa = 0.05
-  fatores_testados:
+  obitos: 1686
+  esperados_tabua: 1627.39
+  software: R glmmTMB (conferido com lme4)
+  candidatos_testados:
   - faixa_idade
   - sexo
-  - setor
-  - faixa_capital
   - faixa_tamanho
-  faixas:
-    idade:
-      limites:
-      - 0
-      - 30
-      - 40
-      - 50
-      - 60
-      - 200
-      rotulos:
-      - ate29
-      - 30-39
-      - 40-49
-      - 50-59
-      - 60+
-    capital:
-      limites:
-      - 0
-      - 30000
-      - 60000
-      - 150000
-      - 400000
-      - .inf
-      rotulos:
-      - ate30k
-      - 30-60k
-      - 60-150k
-      - 150-400k
-      - acima400k
-    tamanho:
-      limites:
-      - 0
-      - 100
-      - 500
-      - 2000
-      - .inf
-      rotulos:
-      - ate99
-      - 100-499
-      - 500-1999
-      - 2000+
-  modelo: Poisson-Gama (efeito de estipulante)
-  ae_base: 0.9173666568165539
-  fatores_no_modelo:
-  - setor
-  - faixa_capital
-fatores:
-  setor:
-    adm_publica: 0.9168947634169415
-    comercio: 0.9925772044748025
-    construcao: 1.2056763692989112
-    financeiro: 0.8678760435735247
-    industria: 1.151907966521341
-    servicos: 1.0
-    transporte: 1.2732653619531917
-  faixa_capital:
-    150-400k: 0.9950694675065106
-    30-60k: 1.0
-    60-150k: 0.9999919613322208
-    acima400k: 0.9900019142566744
-    ate30k: 1.0352930409762306
+  candidatos_que_entraram: []
+  secoes_agrupadas_em_OUTRAS: []
+  esperados_por_secao:
+    C: 200.353
+    F: 150.967
+    G: 68.125
+    H: 206.777
+    K: 133.304
+    M: 88.255
+    N: 277.093
+    O: 319.655
+    P: 116.85
+    Q: 66.01
+  formula: N ~ log_capital_c + cnae_secao + (1 | cnae_secao:cnae_divisao) + (1 | id_estipulante)
+    + offset(log(E))
+  variancias_efeitos_aleatorios:
+    cnae_secao:cnae_divisao: 2.06122498091587e-09
+    id_estipulante: 0.0485006092326588
+ae_base: 0.7542629878864381
+capital:
+  referencia: 50000.0
+  elasticidade: -0.0863165704275166
+secao:
+  O: 1.0
+  C: 1.4145851278106838
+  F: 1.6819637115538821
+  G: 1.4946960379371947
+  H: 1.895109717011487
+  K: 1.2930080527806878
+  M: 1.0873007880820964
+  N: 1.4307391022705385
+  P: 1.0950813463673874
+  Q: 1.2635760917586252
+secao_nao_vista: 1.3683410905560338
+divisao:
+  O:84: 1.0000000045891908
+  C:10: 0.9999999976157858
+  C:13: 1.0000000095591652
+  C:20: 0.9999999851260422
+  C:22: 0.9999999927647982
+  C:25: 1.0000000052882467
+  C:28: 1.0000000151397652
+  C:29: 0.9999999988400861
+  F:41: 1.0000000035776948
+  F:42: 1.0000000059041065
+  F:43: 0.999999993542406
+  G:45: 1.0000000043645263
+  G:46: 0.9999999983481358
+  G:47: 0.9999999995106233
+  H:49: 1.000000008947731
+  H:52: 0.9999999796030772
+  H:53: 1.0000000150173016
+  K:64: 0.9999999986304969
+  K:65: 1.0000000158541307
+  K:66: 0.9999999879299207
+  M:69: 0.9999999975395325
+  M:70: 1.0000000128274997
+  M:71: 0.9999999997622985
+  M:73: 0.9999999913186025
+  N:77: 0.9999999983650065
+  N:78: 0.9999999937030551
+  N:80: 1.0000000005117708
+  N:81: 0.9999999883148698
+  N:82: 1.0000000247188947
+  P:85: 1.0000000019175501
+  Q:86: 0.9999999955862163
+  Q:87: 1.0000000139830931
+  Q:88: 0.9999999919311721
+divisao_nao_vista: 1.0000000010306125
+fatores_categoricos: {}
+faixas:
+  idade:
+    limites:
+    - 0
+    - 30
+    - 40
+    - 50
+    - 60
+    - 200
+    rotulos:
+    - ate29
+    - 30-39
+    - 40-49
+    - 50-59
+    - 60+
+  capital:
+    limites:
+    - 0
+    - 30000
+    - 60000
+    - 150000
+    - 400000
+    - .inf
+    rotulos:
+    - ate30k
+    - 30-60k
+    - 60-150k
+    - 150-400k
+    - acima400k
+  tamanho:
+    limites:
+    - 0
+    - 100
+    - 500
+    - 2000
+    - .inf
+    rotulos:
+    - ate99
+    - 100-499
+    - 500-1999
+    - 2000+

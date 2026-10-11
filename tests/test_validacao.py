@@ -8,7 +8,7 @@ T = pd.Timestamp
 
 
 def _base():
-    est = pd.DataFrame({"id_linha": [2], "id_estipulante": ["E1"], "setor": ["servicos"],
+    est = pd.DataFrame({"id_linha": [2], "id_estipulante": ["E1"], "cnae_secao": ["N"], "cnae_divisao": ["81"],
                         "data_inicio_vigencia": [T("2022-01-01")], "data_fim_vigencia": [pd.NaT],
                         "tipo_capital": ["uniforme"], "contributario": [False], "taxa_vigente_mensal_mil": [0.3]})
     vidas = pd.DataFrame({

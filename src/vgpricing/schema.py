@@ -10,10 +10,11 @@ ESQUEMA: dict[str, dict[str, dict[str, str]]] = {
     "estipulantes": {
         "obrigatorias": {
             "id_estipulante": "str",
-            "setor": "str",
+            "cnae_secao": "str",
             "data_inicio_vigencia": "date",
         },
         "opcionais": {
+            "cnae_divisao": "str",
             "data_fim_vigencia": "date",
             "tipo_capital": "str",
             "contributario": "bool",

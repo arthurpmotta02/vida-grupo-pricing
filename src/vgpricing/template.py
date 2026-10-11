@@ -15,7 +15,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from .schema import ESQUEMA
 
 EXEMPLO = {
-    "estipulantes": {"id_estipulante": "EST0001", "setor": "industria", "data_inicio_vigencia": "01/07/2023",
+    "estipulantes": {"id_estipulante": "EST0001", "cnae_secao": "C", "cnae_divisao": "25", "data_inicio_vigencia": "01/07/2023",
                      "data_fim_vigencia": "", "tipo_capital": "multiplo_salarial", "contributario": "N",
                      "taxa_vigente_mensal_mil": 0.35},
     "vidas": {"id_estipulante": "EST0001", "id_vida": "a3f9c2e17b4d0e55", "data_nascimento": "15/06/1985",
@@ -34,6 +34,8 @@ AJUDA = {
     "situacao": "ativo | afastado | aposentado_invalidez",
     "sexo": "M ou F",
     "status": "pago | pendente | negado",
+    "cnae_secao": "Seção da CNAE 2.0 (letra A a U) da atividade principal do estipulante.",
+    "cnae_divisao": "Divisão da CNAE 2.0 (2 dígitos). Se vazia, usa-se o fator da seção.",
     "taxa_mensal_mil": "Taxa mensal por mil de capital vigente no período.",
     "valor_reserva": "Reserva de sinistro a liquidar (pendentes).",
 }

@@ -16,7 +16,7 @@ def test_idade_completa():
 
 def _estip(inicio="2022-03-01"):
     return pd.DataFrame({"id_estipulante": ["E1"], "data_inicio_vigencia": [T(inicio)],
-                         "data_fim_vigencia": [pd.NaT], "setor": ["x"]})
+                         "data_fim_vigencia": [pd.NaT], "cnae_secao": ["N"], "cnae_divisao": ["81"]})
 
 
 def test_anos_apolice_com_ano_parcial():

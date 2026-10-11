@@ -1,32 +1,32 @@
 """Etapa 2: taxa manual.
 
-Modelo de frequência de óbitos relativo à tábua:
-    N_c ~ Poisson(mu_c),  log mu_c = log E_c + beta_0 + soma dos efeitos dos fatores
-onde E_c = óbitos esperados pela BR-EMS na célula c. exp(beta) é um fator A/E relativo.
+Modelo de frequência de óbitos relativo à tábua, estimado como GLMM no R (glmmTMB):
 
-Três estimadores para a mesma estrutura:
-1. GLM Poisson (statsmodels): referência, saída familiar para auditoria.
-2. GLM Poisson com ridge (implementação própria): encolhe níveis pouco expostos para a média.
-3. Poisson-Gama com efeito aleatório de estipulante (máxima verossimilhança marginal exata,
-   implementação própria): u_i ~ Gama(média 1, variância 1/a). Separa o efeito dos fatores do
-   efeito do grupo e estima a, que é o k de credibilidade em unidades de óbitos esperados:
-       E[u_i | dados] = (a + N_i) / (a + M_i) = Z_i * N_i/M_i + (1 - Z_i),  Z_i = M_i / (M_i + a).
-   É a ligação direta com a fórmula de Bühlmann usada na renovação (Etapa 3).
+    N ~ Poisson(mu),  log mu = log E + beta_0 + beta_cap * log(capital / capital_ref)
+                               [+ fatores candidatos] + u_secao + u_secao:divisao + u_estipulante
 
-Por que contagem (e não valor) na taxa manual: estimar em R$ deixa os fatores reféns de poucos
-sinistros de capital alto. O valor entra na renovação, com pooling de sinistros grandes.
+- Atividade segue a estrutura de Ohlsson (2008): seção CNAE (poucos níveis) como efeito FIXO e
+  divisão dentro da seção (muitos níveis) como efeito ALEATÓRIO, isto é, credibilidade de cada
+  divisão em torno da sua seção. Seções com pouca exposição são agrupadas em "OUTRAS".
+- Capital entra como log(capital) contínuo: um parâmetro só, mais poder que faixas.
+- Atividade e capital estão no modelo por decisão de negócio tomada ANTES de olhar os dados.
+  Faixa etária, sexo e porte são candidatos: entram só com evidência (razão de verossimilhança,
+  com correção de Holm para testes múltiplos).
+- Estima-se em contagem de óbitos; o valor (R$) entra na renovação, com pooling.
+- Só entra experiência maturada (até data_referencia - meses_maturacao).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
-from scipy.special import digamma, gammaln
 
-from .exposicao import exposicao_detalhada
+from .exposicao import exposicao_detalhada, idade_completa
+from .glmm import ResultadoGLMM, ajustar_glmm, prever
 from .tabua import Tabua
+
+CATEGORICAS_BASE = ["id_estipulante", "cnae_secao", "cnae_divisao"]
 
 
 # --------------------------------------------------------------------------- base de modelagem
@@ -37,80 +37,141 @@ def _faixa(valores, faixa_cfg) -> pd.Series:
 
 def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
                    data_referencia, cfg_manual: dict, dias_por_ano: float = 365.25) -> tuple[pd.DataFrame, dict]:
-    """Tabela de células (estipulante x idade x sexo x setor x capital x tamanho) com E e N.
-
-    Usa só a experiência maturada: exposição e ocorrências até data_referencia - meses_maturacao.
-    Cada sinistro herda a célula do pedaço de exposição em que a vida estava na data do óbito.
-    """
+    """Células (estipulante x faixa etária x sexo x faixa de capital) com E, N e o log do capital
+    médio da célula (ponderado pelos óbitos esperados, porque o efeito multiplica q_x)."""
     corte = pd.Timestamp(data_referencia) - pd.DateOffset(months=cfg_manual["meses_maturacao"])
     det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano)
     fx = cfg_manual["faixas"]
-    det = det.merge(estipulantes[["id_estipulante", "setor"]], on="id_estipulante", how="left")
+    est = estipulantes[["id_estipulante", "cnae_secao", "cnae_divisao"]].copy()
+    est["cnae_secao"] = est["cnae_secao"].astype("string").fillna("ND")
+    est["cnae_divisao"] = est["cnae_divisao"].astype("string").fillna("ND")
+    det = det.merge(est, on="id_estipulante", how="left")
     det["sexo"] = det["sexo"].astype("string").fillna("ND")
     det["faixa_idade"] = _faixa(det["idade"], fx["idade"])
     det["faixa_capital"] = _faixa(det["capital"], fx["capital"])
-    porte = det.groupby("id_estipulante").apply(
-        lambda g: g["exposicao"].sum() / g["ano_apolice"].nunique(), include_groups=False).rename("vidas_medias")
+    porte = det.groupby("id_estipulante")[["exposicao"]].sum().join(
+        det.groupby("id_estipulante")["ano_apolice"].nunique()).eval("exposicao / ano_apolice").rename("vidas_medias")
     det = det.merge(porte, on="id_estipulante")
     det["faixa_tamanho"] = _faixa(det["vidas_medias"], fx["tamanho"])
+    det["E_logcap"] = det["obitos_esperados"] * np.log(det["capital"])
 
-    # sinistros -> pedaço de exposição vigente na ocorrência
     s = sinistros[sinistros["data_ocorrencia"] <= corte]
     m = s[["id_sinistro", "id_estipulante", "id_vida", "data_ocorrencia"]].merge(
-        det[["id_estipulante", "id_vida", "ini", "fim", "faixa_idade", "sexo", "setor", "faixa_capital",
-             "faixa_tamanho", "capital"]], on=["id_estipulante", "id_vida"], how="inner")
+        det[["id_estipulante", "id_vida", "ini", "fim", "faixa_idade", "sexo", "faixa_capital", "capital"]],
+        on=["id_estipulante", "id_vida"], how="inner")
     m = m[(m["data_ocorrencia"] >= m["ini"]) & (m["data_ocorrencia"] <= m["fim"])].drop_duplicates("id_sinistro")
     sem_celula = sorted(set(s["id_sinistro"]) - set(m["id_sinistro"]))
 
-    chave = ["id_estipulante", "faixa_idade", "sexo", "setor", "faixa_capital", "faixa_tamanho"]
+    chave = ["id_estipulante", "faixa_idade", "sexo", "faixa_capital"]
     cel = det.groupby(chave, as_index=False, observed=True).agg(
-        E=("obitos_esperados", "sum"), exposicao=("exposicao", "sum"), capital_ano=("capital_ano", "sum"),
+        E=("obitos_esperados", "sum"), E_logcap=("E_logcap", "sum"), exposicao=("exposicao", "sum"),
         valor_esperado=("valor_esperado", "sum"))
-    obs = m.groupby(chave, as_index=False, observed=True).agg(N=("id_sinistro", "count"), valor_observado=("capital", "sum"))
+    obs = m.groupby(chave, as_index=False, observed=True).agg(N=("id_sinistro", "count"),
+                                                             valor_observado=("capital", "sum"))
     cel = cel.merge(obs, on=chave, how="left").fillna({"N": 0, "valor_observado": 0.0})
     cel["N"] = cel["N"].astype(int)
+    cel = cel.merge(est, on="id_estipulante").merge(
+        det[["id_estipulante", "faixa_tamanho"]].drop_duplicates(), on="id_estipulante")
+    cel["log_capital_c"] = cel.pop("E_logcap") / cel["E"] - np.log(cfg_manual["capital_referencia"])
+    exp_sec = cel.groupby("cnae_secao")["E"].sum()
+    raras = sorted(exp_sec[exp_sec < cfg_manual["modelo"]["min_esperados_secao"]].index)
+    cel["cnae_secao_original"] = cel["cnae_secao"]
+    cel.loc[cel["cnae_secao"].isin(raras), "cnae_secao"] = "OUTRAS"
     n_nd = int((cel["sexo"] == "ND").sum())
     cel = cel[(cel["sexo"] != "ND") & (cel["E"] > 0)].reset_index(drop=True)
     info = {"corte_experiencia": corte.date().isoformat(), "sinistros_no_periodo": int(len(s)),
             "sinistros_sem_celula": len(sem_celula), "ids_sem_celula": sem_celula[:50],
-            "celulas_sexo_ND_removidas": n_nd, "celulas": int(len(cel)),
-            "obitos": int(cel["N"].sum()), "esperados": float(cel["E"].sum())}
+            "celulas_sexo_ND_removidas": n_nd, "celulas": int(len(cel)), "estipulantes": int(cel["id_estipulante"].nunique()),
+            "obitos": int(cel["N"].sum()), "esperados": float(cel["E"].sum()),
+            "secoes_agrupadas_em_OUTRAS": raras}
     return cel, info
 
 
-# --------------------------------------------------------------------------- desenho
+# --------------------------------------------------------------------------- ajuste e seleção
 
-@dataclass
-class Desenho:
-    fatores: list[str]
-    niveis: dict[str, list[str]]
-    base: dict[str, str]
-    colunas: list[str] = field(default_factory=list)
-    completa: bool = False      # True: todas as dummies (ridge); False: codificação de referência
+def niveis_base(cel: pd.DataFrame, colunas: list[str]) -> dict[str, str]:
+    """Nível base de cada fator categórico fixo: o de maior exposição (óbitos esperados)."""
+    return {c: str(cel.groupby(c)["E"].sum().idxmax()) for c in colunas}
 
-    @classmethod
-    def criar(cls, df: pd.DataFrame, fatores: list[str], completa: bool = False) -> "Desenho":
-        niveis, base = {}, {}
-        for f in fatores:
-            exp = df.groupby(f, observed=True)["E"].sum().sort_values(ascending=False)
-            niveis[f] = sorted(exp.index.astype(str))
-            base[f] = str(exp.index[0])           # nível de maior exposição
-        d = cls(fatores, niveis, base, completa=completa)
-        d.colunas = ["(intercepto)"] + [f"{f}[{n}]" for f in fatores for n in niveis[f]
-                                         if completa or n != base[f]]
-        return d
 
-    def matriz(self, df: pd.DataFrame) -> np.ndarray:
-        X = np.zeros((len(df), len(self.colunas)))
-        X[:, 0] = 1.0
-        pos = {c: j for j, c in enumerate(self.colunas)}
-        for f in self.fatores:
-            v = df[f].astype(str).to_numpy()
-            for n in self.niveis[f]:
-                c = f"{f}[{n}]"
-                if c in pos:
-                    X[v == n, pos[c]] = 1.0
-        return X
+def _ajustar(cel, cfg_manual, fixos, testar_fixos=(), testar_aleatorios=(), conferir_lme4=False) -> ResultadoGLMM:
+    m = cfg_manual["modelo"]
+    cats = ["cnae_secao"] + list(m["fixos_candidatos"])
+    return ajustar_glmm(cel, fixos=fixos, aleatorios=m["aleatorios"],
+                        categoricas=CATEGORICAS_BASE + list(m["fixos_candidatos"]), numericas=["log_capital_c"],
+                        niveis_base=niveis_base(cel, cats), testar_fixos=list(testar_fixos),
+                        testar_aleatorios=list(testar_aleatorios), conferir_lme4=conferir_lme4)
+
+
+def holm(p: pd.Series) -> pd.Series:
+    """p-valores ajustados por Holm (controle do erro de família nos testes dos candidatos)."""
+    p = pd.Series(p, dtype=float)
+    ordem = p.sort_values().index
+    m = len(p)
+    aj = pd.Series(np.minimum(1.0, np.maximum.accumulate((m - np.arange(m)) * p.loc[ordem].to_numpy())), index=ordem)
+    return aj.reindex(p.index)
+
+
+def ajustar_taxa_manual(cel: pd.DataFrame, cfg_manual: dict, conferir_lme4: bool = True
+                        ) -> tuple[ResultadoGLMM, ResultadoGLMM, pd.DataFrame]:
+    """1) Ajusta o modelo completo (obrigatórios + candidatos) e testa cada candidato e cada efeito
+    aleatório por razão de verossimilhança. 2) Reajusta só com os candidatos com p <= alfa.
+    Devolve (modelo_final, modelo_completo, testes)."""
+    m = cfg_manual["modelo"]
+    completo = _ajustar(cel, cfg_manual, m["fixos_obrigatorios"] + m["fixos_candidatos"],
+                        testar_fixos=m["fixos_candidatos"], testar_aleatorios=m["aleatorios"])
+    t = completo.testes.copy()
+    fixo = t["tipo"] == "fixo"
+    t["p_holm"] = np.nan
+    t.loc[fixo, "p_holm"] = holm(t.loc[fixo, "p_valor"])
+    t["decisao"] = np.where(~fixo, "estrutura (mantido)", np.where(t["p_holm"] <= m["alfa"], "entra", "não entra"))
+    entram = t.loc[(t["tipo"] == "fixo") & (t["decisao"] == "entra"), "termo"].tolist()
+    final = _ajustar(cel, cfg_manual, m["fixos_obrigatorios"] + entram, conferir_lme4=conferir_lme4)
+    return final, completo, t
+
+
+# --------------------------------------------------------------------------- comparações
+
+def glm_poisson(cel: pd.DataFrame, formula: str = "N ~ C(cnae_secao) + log_capital_c"):
+    """GLM Poisson sem efeitos aleatórios (statsmodels), para comparação."""
+    import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    return smf.glm(formula, data=cel, family=sm.families.Poisson(), offset=np.log(cel["E"])).fit()
+
+
+def glm_nb2(cel: pd.DataFrame, formula: str = "N ~ C(cnae_secao) + log_capital_c"):
+    """Binomial Negativa NB2 (dispersão por célula), para comparação."""
+    import statsmodels.formula.api as smf
+    inicio = glm_poisson(cel, formula).params.to_numpy()
+    mod = smf.negativebinomial(formula, data=cel, offset=np.log(cel["E"]), loglike_method="nb2")
+    # parte da solução Poisson: sem isso, quando a dispersão por célula é quase nula, o otimizador
+    # diverge (alpha -> 0) e a log-verossimilhança sai NaN
+    import warnings
+    for metodo in ("newton", "bfgs"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            r = mod.fit(start_params=np.append(inicio, 0.05), method=metodo, disp=0, maxiter=3000)
+        if np.isfinite(r.llf):
+            return r
+    raise RuntimeError("Binomial Negativa não convergiu")
+
+
+def comparar_dispersao(cel: pd.DataFrame, res_glmm: ResultadoGLMM,
+                       formula: str = "N ~ C(cnae_secao) + log_capital_c") -> pd.DataFrame:
+    """Onde está a sobredispersão? Poisson, NB2 (célula) e GLMM (grupo e atividade), com
+    log-verossimilhanças na mesma base (statsmodels e glmmTMB incluem -log N!)."""
+    p, nb = glm_poisson(cel, formula), glm_nb2(cel, formula)
+    linhas = [
+        {"modelo": "GLM Poisson", "dispersão": "nenhuma", "loglik": p.llf, "parametros": int(p.df_model + 1)},
+        {"modelo": "Binomial Negativa (NB2)", "dispersão": "por célula, independente", "loglik": nb.llf,
+         "parametros": int(len(nb.params))},
+        {"modelo": "GLMM (glmmTMB)", "dispersão": "por grupo e por atividade", "loglik": res_glmm.loglik,
+         "parametros": res_glmm.gl},
+    ]
+    out = pd.DataFrame(linhas)
+    out["AIC"] = -2 * out["loglik"] + 2 * out["parametros"]
+    out["dif_AIC_vs_melhor"] = out["AIC"] - out["AIC"].min()
+    return out
 
 
 def _deviance_poisson(N, mu) -> float:
@@ -120,289 +181,79 @@ def _deviance_poisson(N, mu) -> float:
     return float(2 * np.sum(t - (N - mu)))
 
 
-# --------------------------------------------------------------------------- 1. GLM Poisson
-
-@dataclass
-class ResultadoModelo:
-    nome: str
-    desenho: Desenho
-    beta: np.ndarray
-    ep: np.ndarray | None = None
-    extra: dict = field(default_factory=dict)
-
-    def mu(self, df: pd.DataFrame) -> np.ndarray:
-        return df["E"].to_numpy() * np.exp(self.desenho.matriz(df) @ self.beta)
-
-    def fatores(self) -> pd.DataFrame:
-        """Fator multiplicativo de cada nível (base = 1) e A/E base (intercepto)."""
-        linhas = []
-        coef = dict(zip(self.desenho.colunas, self.beta))
-        ep = dict(zip(self.desenho.colunas, self.ep)) if self.ep is not None else {}
-        for f in self.desenho.fatores:
-            b_base = coef.get(f"{f}[{self.desenho.base[f]}]", 0.0)
-            for n in self.desenho.niveis[f]:
-                b = coef.get(f"{f}[{n}]", 0.0) - b_base     # relativo ao nível base
-                e = ep.get(f"{f}[{n}]", np.nan) if n != self.desenho.base[f] else 0.0
-                linhas.append({"fator": f, "nivel": n, "base": n == self.desenho.base[f],
-                               "relatividade": np.exp(b), "ep_log": e,
-                               "ic_inf": np.exp(b - 1.96 * e) if e == e else np.nan,
-                               "ic_sup": np.exp(b + 1.96 * e) if e == e else np.nan})
-        out = pd.DataFrame(linhas, columns=["fator", "nivel", "base", "relatividade", "ep_log", "ic_inf", "ic_sup"])
-        b0 = coef["(intercepto)"] + sum(coef.get(f"{f}[{self.desenho.base[f]}]", 0.0) for f in self.desenho.fatores)
-        out.attrs["ae_base"] = float(np.exp(b0))
-        return out
-
-
-def ajustar_glm(df: pd.DataFrame, fatores: list[str]) -> ResultadoModelo:
-    import statsmodels.api as sm
-    d = Desenho.criar(df, fatores)
-    X = d.matriz(df)
-    mod = sm.GLM(df["N"].to_numpy(), X, family=sm.families.Poisson(), offset=np.log(df["E"].to_numpy()))
-    r = mod.fit()
-    gl = len(df) - X.shape[1]
-    return ResultadoModelo("GLM Poisson", d, r.params, r.bse, {
-        "deviance": float(r.deviance), "pearson_chi2": float(r.pearson_chi2), "gl": gl,
-        "dispersao_pearson": float(r.pearson_chi2 / gl), "aic": float(r.aic), "loglik": float(r.llf),
-        "statsmodels": r})
-
-
-def teste_binomial_negativa(df: pd.DataFrame, fatores: list[str], res_poisson: ResultadoModelo) -> dict:
-    """NB2 nas células (statsmodels) e teste da razão de verossimilhança contra a Poisson.
-    O parâmetro alpha está na fronteira sob H0, então o p-valor usa a mistura 50:50 de qui-quadrados."""
-    import statsmodels.api as sm
-    from scipy.stats import chi2
-    X = res_poisson.desenho.matriz(df)
-    nb = sm.NegativeBinomial(df["N"].to_numpy(), X, offset=np.log(df["E"].to_numpy()), loglike_method="nb2")
-    r = nb.fit(start_params=np.append(res_poisson.beta, 0.1), disp=0, maxiter=500)
-    lr = 2 * (r.llf - res_poisson.extra["loglik"])
-    p = 0.5 * chi2.sf(max(lr, 0), 1)
-    return {"alpha_nb2": float(r.params[-1]), "ep_alpha": float(r.bse[-1]), "estatistica_lr": float(lr),
-            "p_valor": float(p), "aic_nb": float(r.aic), "aic_poisson": res_poisson.extra["aic"]}
-
-
-# --------------------------------------------------------------------------- 2. Ridge
-
-def ajustar_ridge(df: pd.DataFrame, fatores: list[str], lam: float) -> ResultadoModelo:
-    """Poisson penalizada: min  sum(mu - N log mu) + lam/2 * sum(beta_j^2), j != intercepto.
-    Codificação completa (todas as dummies): o ridge encolhe cada nível para a média da carteira,
-    sem privilegiar um nível base. Com lam = 0 cai na codificação de referência (= GLM)."""
-    if lam == 0:
-        r = ajustar_glm(df, fatores)
-        r.nome, r.extra = "Ridge (lambda=0)", {"lambda": 0.0}
-        return r
-    d = Desenho.criar(df, fatores, completa=True)
-    X, N, logE = d.matriz(df), df["N"].to_numpy(float), np.log(df["E"].to_numpy())
-    pen = np.r_[0.0, np.full(X.shape[1] - 1, lam)]
-
-    def f(b):
-        eta = logE + X @ b
-        mu = np.exp(eta)
-        return float(np.sum(mu - N * eta) + 0.5 * np.sum(pen * b * b)), X.T @ (mu - N) + pen * b
-
-    b0 = np.zeros(X.shape[1])
-    b0[0] = np.log(N.sum() / np.exp(logE).sum())
-    opt = minimize(f, b0, jac=True, method="L-BFGS-B", options={"maxiter": 2000, "gtol": 1e-8})
-    return ResultadoModelo(f"Ridge (lambda={lam:g})", d, opt.x, None, {"lambda": lam, "convergiu": bool(opt.success)})
-
-
-def _folds_por_grupo(df: pd.DataFrame, k: int, semente: int) -> np.ndarray:
-    grupos = df["id_estipulante"].unique()
+def validacao_cruzada_grupos(cel: pd.DataFrame, previsores: dict, k: int = 5, semente: int = 2026) -> pd.DataFrame:
+    """Deixa grupos inteiros de fora (simula cotar um grupo novo) e mede a deviance de Poisson no
+    total de óbitos de cada grupo deixado de fora. `previsores`: {nome: f(treino, teste) -> mu}."""
+    grupos = cel["id_estipulante"].unique()
     rng = np.random.default_rng(semente)
-    f = dict(zip(rng.permutation(grupos), np.arange(len(grupos)) % k))
-    return df["id_estipulante"].map(f).to_numpy()
-
-
-def validacao_cruzada(df: pd.DataFrame, ajustadores: dict, k: int = 5, semente: int = 2026) -> pd.DataFrame:
-    """Deviance de Poisson fora da amostra, deixando GRUPOS inteiros de fora (simula cotar um grupo
-    novo). Avaliada no total de cada grupo, que é o que a taxa manual precisa acertar."""
-    fold = _folds_por_grupo(df, k, semente)
+    fold = cel["id_estipulante"].map(dict(zip(rng.permutation(grupos), np.arange(len(grupos)) % k))).to_numpy()
     linhas = []
-    for nome, ajustar in ajustadores.items():
-        dev = 0.0
+    for nome, f in previsores.items():
+        dev, prev, obs = 0.0, 0.0, 0.0
         for i in range(k):
-            tr, te = df[fold != i], df[fold == i]
-            mu = ajustar(tr).mu(te) if ajustar is not None else te["E"].to_numpy()
-            g = te.assign(mu=mu).groupby("id_estipulante")[["N", "mu"]].sum()
+            tr, te = cel[fold != i], cel[fold == i]
+            g = te.assign(mu=f(tr, te)).groupby("id_estipulante")[["N", "mu"]].sum()
             dev += _deviance_poisson(g["N"], g["mu"])
-        linhas.append({"modelo": nome, "deviance_fora_amostra": dev})
+            prev += g["mu"].sum(); obs += g["N"].sum()
+        linhas.append({"modelo": nome, "deviance_grupos_novos": dev, "previstos/observados": prev / obs})
     out = pd.DataFrame(linhas)
-    out["dif_vs_melhor"] = out["deviance_fora_amostra"] - out["deviance_fora_amostra"].min()
+    out["dif_vs_melhor"] = out["deviance_grupos_novos"] - out["deviance_grupos_novos"].min()
     return out
 
 
-def escolher_lambda(df, fatores, lambdas, k=5, semente=2026) -> pd.DataFrame:
-    aj = {lam: (lambda d, lam=lam: ajustar_ridge(d, fatores, lam)) for lam in lambdas}
-    cv = validacao_cruzada(df, aj, k, semente).rename(columns={"modelo": "lambda"})
-    return cv
+# --------------------------------------------------------------------------- tabela de fatores
 
+def tabela_fatores(res: ResultadoGLMM, cfg_manual: dict, meta: dict) -> dict:
+    """Fatores para o cotador. A/E base inclui a média marginal do efeito de estipulante
+    (grupo novo); seção/divisão não vistas usam a média marginal do respectivo efeito."""
+    v = res.variancias
+    fat_cat = {}
+    for c in cfg_manual["modelo"]["fixos_candidatos"]:
+        if c in res.especificacao["fixos"]:
+            base = res.especificacao["niveis_base"][c]
+            niveis = {base: 1.0}
+            for nome, b in zip(res.fixos["nome"], res.fixos["estimativa"]):
+                if nome.startswith(c):
+                    niveis[nome[len(c):]] = float(np.exp(b))
+            fat_cat[c] = niveis
+    base_sec = res.especificacao["niveis_base"]["cnae_secao"]
+    secoes = {base_sec: 1.0}
+    for nome, b in zip(res.fixos["nome"], res.fixos["estimativa"]):
+        if nome.startswith("cnae_secao"):
+            secoes[nome[len("cnae_secao"):]] = float(np.exp(b))
+    peso = meta.get("esperados_por_secao") or {}
+    if peso:
+        tot = sum(peso.get(k, 0.0) for k in secoes)
+        media_sec = sum(secoes[k] * peso.get(k, 0.0) for k in secoes) / tot if tot else 1.0
+    else:
+        media_sec = float(np.mean(list(secoes.values())))
+    divisoes = res.aleatorios.get("cnae_secao:cnae_divisao", pd.DataFrame(columns=["nivel", "modo"]))
+    return {
+        "meta": {**meta, "formula": res.formula, "variancias_efeitos_aleatorios": v},
+        "ae_base": float(np.exp(res.coef("(Intercept)") + v.get("id_estipulante", 0.0) / 2)),
+        "capital": {"referencia": float(cfg_manual["capital_referencia"]),
+                    "elasticidade": res.coef("log_capital_c")},
+        "secao": secoes,
+        "secao_nao_vista": float(secoes.get("OUTRAS", media_sec)),
+        "divisao": {str(n): float(np.exp(u)) for n, u in zip(divisoes["nivel"], divisoes["modo"])},
+        "divisao_nao_vista": float(np.exp(v.get("cnae_secao:cnae_divisao", 0.0) / 2)),
+        "fatores_categoricos": fat_cat,
+        "faixas": cfg_manual["faixas"],
+    }
 
-# --------------------------------------------------------------------------- 3. Poisson-Gama
-
-def _nll_poisson_gama(theta, X, N, logE, g_idx, n_grupos, pen=None):
-    b, loga = theta[:-1], theta[-1]
-    a = np.exp(loga)
-    eta = logE + X @ b
-    mu = np.exp(eta)
-    Ni = np.bincount(g_idx, weights=N, minlength=n_grupos)
-    Mi = np.bincount(g_idx, weights=mu, minlength=n_grupos)
-    ll = (np.sum(N * eta)
-          + np.sum(gammaln(a + Ni) - gammaln(a) + a * np.log(a) - (a + Ni) * np.log(a + Mi)))
-    w = ((a + Ni) / (a + Mi))[g_idx]                       # média a posteriori de u_i, por linha
-    grad_b = X.T @ (N - w * mu)
-    dll_da = np.sum(digamma(a + Ni) - digamma(a) + np.log(a) + 1 - np.log(a + Mi) - (a + Ni) / (a + Mi))
-    if pen is not None:                                   # ridge: equivale a priori N(0, 1/lambda) no log-fator
-        ll -= 0.5 * np.sum(pen * b * b)
-        grad_b = grad_b - pen * b
-    return -ll, -np.r_[grad_b, a * dll_da]
-
-
-def ajustar_poisson_gama(df: pd.DataFrame, fatores: list[str], grupo: str = "id_estipulante",
-                         beta_inicial: np.ndarray | None = None,
-                         penalizacao: dict[str, float] | None = None) -> ResultadoModelo:
-    """penalizacao: {fator: lambda}. Encolhe os níveis desse fator para o nível base (fator 1),
-    o que equivale a uma priori Normal(0, 1/lambda) no log do fator (estimativa MAP)."""
-    d = Desenho.criar(df, fatores)
-    X, N, logE = d.matriz(df), df["N"].to_numpy(float), np.log(df["E"].to_numpy())
-    codigos, grupos = pd.factorize(df[grupo])
-    pen = None
-    if penalizacao:
-        pen = np.zeros(X.shape[1])
-        for j, c in enumerate(d.colunas):
-            for f, lam in penalizacao.items():
-                if c.startswith(f"{f}["):
-                    pen[j] = lam
-    b0 = beta_inicial if beta_inicial is not None else np.r_[np.log(N.sum() / np.exp(logE).sum()),
-                                                             np.zeros(X.shape[1] - 1)]
-    th0 = np.r_[b0, np.log(10.0)]
-    args = (X, N, logE, codigos, len(grupos), pen)
-    opt = minimize(_nll_poisson_gama, th0, args=args, jac=True, method="L-BFGS-B",
-                   options={"maxiter": 5000, "gtol": 1e-7})
-    th = opt.x
-    # erro-padrão: hessiana numérica do gradiente analítico
-    h = 1e-5
-    H = np.zeros((len(th), len(th)))
-    for j in range(len(th)):
-        e = np.zeros(len(th)); e[j] = h
-        H[:, j] = (_nll_poisson_gama(th + e, *args)[1] - _nll_poisson_gama(th - e, *args)[1]) / (2 * h)
-    H = (H + H.T) / 2
-    cov = np.linalg.inv(H)
-    ep = np.sqrt(np.clip(np.diag(cov), 0, None))
-    a = float(np.exp(th[-1]))
-    mu = np.exp(logE + X @ th[:-1])
-    g = pd.DataFrame({"g": grupos[codigos], "N": N, "M": mu}).groupby("g")[["N", "M"]].sum()
-    g["Z"] = g["M"] / (g["M"] + a)
-    g["fator_grupo_posteriori"] = (a + g["N"]) / (a + g["M"])
-    ll = float(-_nll_poisson_gama(th, X, N, logE, codigos, len(grupos), None)[0])   # sem o termo de penalização
-    ll_completa = ll - float(np.sum(gammaln(N + 1)))       # mesma base do statsmodels (inclui -log N!)
-    n_par = X.shape[1] + 1
-    return ResultadoModelo("Poisson-Gama (efeito de estipulante)", d, th[:-1], ep[:-1], {
-        "k": a, "ep_log_k": float(ep[-1]), "ic_k": (a * np.exp(-1.96 * ep[-1]), a * np.exp(1.96 * ep[-1])),
-        "cv_efeito_grupo": float(1 / np.sqrt(a)), "loglik": ll, "loglik_completa": ll_completa,
-        "aic": -2 * ll_completa + 2 * n_par, "n_parametros": n_par, "penalizacao": penalizacao or {},
-        "convergiu": bool(opt.success),
-        "grupos": g.reset_index().rename(columns={"g": grupo})})
-
-
-# --------------------------------------------------------------------------- taxa pura manual
-
-def tabela_fatores(res: ResultadoModelo, meta: dict) -> dict:
-    """Exporta fatores para o cotador (YAML/JSON versionável)."""
-    fat = res.fatores()
-    return {"meta": {**meta, "modelo": res.nome, "ae_base": float(fat.attrs["ae_base"]),
-                     "fatores_no_modelo": list(res.desenho.fatores)},
-            "fatores": {f: {r.nivel: float(r.relatividade) for r in g.itertuples()}
-                        for f, g in fat.groupby("fator", sort=False)},
-            }
-
-
-def taxa_pura_manual(vidas: pd.DataFrame, setor: str, tabela: dict, tabua: Tabua, data_calculo,
-                     cfg_manual: dict) -> dict:
-    """Taxa pura anual e mensal por mil de capital para um censo de vidas (cotação de grupo novo).
-
-    Para cada vida: custo esperado = capital x q_x(idade na data de cálculo, sexo) x A/E base
-    x produto dos fatores. Taxa = soma dos custos / soma dos capitais x 1000.
-    """
-    v = vidas.copy()
-    data = pd.Timestamp(data_calculo)
-    from .exposicao import idade_completa
-    v["idade"] = idade_completa(v["data_nascimento"], pd.Series(data, index=v.index)).astype(int)
-    v["q"] = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy())
-    fx = cfg_manual["faixas"]
-    v["faixa_idade"] = _faixa(v["idade"], fx["idade"])
-    v["faixa_capital"] = _faixa(v["capital"], fx["capital"])
-    v["setor"] = setor
-    v["faixa_tamanho"] = str(_faixa(pd.Series([len(v)]), fx["tamanho"]).iloc[0])
-    f = tabela["fatores"]
-    mult = np.full(len(v), tabela["meta"]["ae_base"])
-    nao_encontrados = {}
-    for fator, mapa in f.items():
-        col = v[fator].astype(str) if fator in v else pd.Series("", index=v.index)
-        valores = col.map(mapa)
-        if valores.isna().any():
-            nao_encontrados[fator] = sorted(col[valores.isna()].unique())
-            valores = valores.fillna(1.0)
-        mult = mult * valores.to_numpy()
-    v["q_ajustado"] = v["q"] * mult
-    v["custo_esperado"] = v["capital"] * v["q_ajustado"]
-    taxa_anual = 1000 * v["custo_esperado"].sum() / v["capital"].sum()
-    return {"taxa_pura_anual_mil": float(taxa_anual), "taxa_pura_mensal_mil": float(taxa_anual / 12),
-            "premio_puro_anual": float(v["custo_esperado"].sum()), "capital_total": float(v["capital"].sum()),
-            "vidas": int(len(v)), "obitos_esperados": float(v["q_ajustado"].sum()),
-            "niveis_sem_fator": nao_encontrados, "detalhe": v}
-
-
-# --------------------------------------------------------------------------- seleção de fatores
-
-def testes_lr_fatores(df: pd.DataFrame, fatores: list[str], completo: ResultadoModelo | None = None) -> pd.DataFrame:
-    """Teste da razão de verossimilhança de cada fator no modelo Poisson-Gama (retira um fator
-    por vez, mantendo os demais). Um fator só entra na tabela de preço com evidência nos dados."""
-    from scipy.stats import chi2
-    completo = completo or ajustar_poisson_gama(df, fatores)
-    linhas = []
-    for f in fatores:
-        outros = [x for x in fatores if x != f]
-        red = ajustar_poisson_gama(df, outros)
-        lr = 2 * (completo.extra["loglik"] - red.extra["loglik"])
-        gl = len(completo.desenho.niveis[f]) - 1
-        linhas.append({"fator": f, "niveis": gl + 1, "estatistica_lr": lr, "gl": gl, "p_valor": chi2.sf(max(lr, 0), gl)})
-    return pd.DataFrame(linhas)
-
-
-def selecionar_fatores(df: pd.DataFrame, fatores: list[str], alfa: float = 0.05,
-                       obrigatorios: tuple[str, ...] = ()) -> tuple[list[str], pd.DataFrame]:
-    """Eliminação para trás: retira o fator menos significativo enquanto houver p > alfa.
-    `obrigatorios` ficam no modelo por decisão de negócio, qualquer que seja o p-valor."""
-    atuais, historico = list(fatores), []
-    while True:
-        lr = testes_lr_fatores(df, atuais)
-        cand = lr[~lr["fator"].isin(obrigatorios)].sort_values("p_valor", ascending=False)
-        if cand.empty or cand.iloc[0]["p_valor"] <= alfa:
-            return atuais, pd.concat(historico + [lr.assign(passo=len(historico) + 1, acao="final")], ignore_index=True)
-        sai = cand.iloc[0]["fator"]
-        historico.append(lr.assign(passo=len(historico) + 1, acao=np.where(lr["fator"] == sai, "retirado", "")))
-        atuais.remove(sai)
-        if not atuais:
-            return atuais, pd.concat(historico, ignore_index=True)
-
-
-# --------------------------------------------------------------------------- persistência
 
 def _para_python(x):
-    """Converte tipos numpy/pandas em tipos nativos (YAML legível e sem tags de objeto)."""
     if isinstance(x, dict):
         return {str(k): _para_python(v) for k, v in x.items()}
     if isinstance(x, (list, tuple)):
         return [_para_python(v) for v in x]
     if isinstance(x, np.generic):
         return x.item()
-    if isinstance(x, float) and np.isinf(x):
-        return float("inf")
     return x
 
 
 def salvar_tabela(tabela: dict, caminho) -> None:
     import yaml
-    from pathlib import Path
     Path(caminho).parent.mkdir(parents=True, exist_ok=True)
     with open(caminho, "w", encoding="utf-8") as f:
         yaml.safe_dump(_para_python(tabela), f, allow_unicode=True, sort_keys=False)
@@ -414,98 +265,44 @@ def carregar_tabela(caminho) -> dict:
         return yaml.safe_load(f)
 
 
+# --------------------------------------------------------------------------- taxa pura
 
-# --------------------------------------------------------------------------- comparação de dispersão
+def taxa_pura_manual(vidas: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela: dict, tabua: Tabua,
+                     data_calculo) -> dict:
+    """Taxa pura anual e mensal por mil de capital para o censo de um grupo novo.
 
-def comparar_dispersao(df: pd.DataFrame, fatores: list[str]) -> pd.DataFrame:
-    """Poisson, Binomial Negativa (NB2, dispersão por célula) e Poisson-Gama (dispersão por grupo),
-    com log-verossimilhanças na mesma base (incluindo -log N!), para comparar por AIC.
-    NB2 e Poisson-Gama não são aninhados: a comparação é por AIC, não por teste LR."""
-    import statsmodels.api as sm
-    glm = ajustar_glm(df, fatores)
-    X = glm.desenho.matriz(df)
-    nb = sm.NegativeBinomial(df["N"].to_numpy(), X, offset=np.log(df["E"].to_numpy()), loglike_method="nb2")
-    rnb = nb.fit(start_params=np.append(glm.beta, 0.1), disp=0, maxiter=500)
-    pg = ajustar_poisson_gama(df, fatores, beta_inicial=glm.beta)
-    p = X.shape[1]
-    linhas = [
-        {"modelo": "Poisson", "onde fica a dispersão": "nenhuma", "loglik": glm.extra["loglik"], "parametros": p},
-        {"modelo": "Binomial Negativa (NB2)", "onde fica a dispersão": "célula (independente)",
-         "loglik": float(rnb.llf), "parametros": p + 1},
-        {"modelo": "Poisson-Gama", "onde fica a dispersão": "estipulante (compartilhada pelas células)",
-         "loglik": pg.extra["loglik_completa"], "parametros": p + 1},
-    ]
-    out = pd.DataFrame(linhas)
-    out["AIC"] = -2 * out["loglik"] + 2 * out["parametros"]
-    out["dif_AIC_vs_melhor"] = out["AIC"] - out["AIC"].min()
-    return out
-
-
-def ajustar_nb2(df: pd.DataFrame, fatores: list[str]) -> ResultadoModelo:
-    """NB2 nas células (statsmodels), embrulhada como ResultadoModelo para comparação."""
-    import statsmodels.api as sm
-    glm = ajustar_glm(df, fatores)
-    X = glm.desenho.matriz(df)
-    r = sm.NegativeBinomial(df["N"].to_numpy(), X, offset=np.log(df["E"].to_numpy()),
-                            loglike_method="nb2").fit(start_params=np.append(glm.beta, 0.1), disp=0, maxiter=500)
-    return ResultadoModelo("Binomial Negativa (NB2)", glm.desenho, r.params[:-1], r.bse[:-1],
-                           {"alpha": float(r.params[-1]), "loglik": float(r.llf)})
-
-
-def escolher_lambda_pg(df: pd.DataFrame, fatores: list[str], fator_penalizado: str, lambdas,
-                       k: int = 5, semente: int = 2026, penalizacao_fixa: dict | None = None) -> pd.DataFrame:
-    """Escolhe o encolhimento de UM fator no Poisson-Gama por validação cruzada deixando grupos de
-    fora (os demais fatores penalizados ficam em `penalizacao_fixa`). A deviance é medida nas
-    CÉLULAS dos grupos deixados de fora: é ali que a estrutura do fator é testada."""
-    fold = _folds_por_grupo(df, k, semente)
-    linhas = []
-    for lam in lambdas:
-        pen = {**(penalizacao_fixa or {}), fator_penalizado: lam}
-        pen = {f: l for f, l in pen.items() if l > 0} or None
-        dev = 0.0
-        for i in range(k):
-            tr, te = df[fold != i], df[fold == i]
-            r = ajustar_poisson_gama(tr, fatores, penalizacao=pen)
-            dev += _deviance_poisson(te["N"], r.mu(te))
-        linhas.append({"fator": fator_penalizado, "lambda": lam, "deviance_fora_amostra": dev})
-    out = pd.DataFrame(linhas)
-    out["dif_vs_melhor"] = out["deviance_fora_amostra"] - out["deviance_fora_amostra"].min()
-    out["no_limite_da_grade"] = out["lambda"].eq(out.loc[out["deviance_fora_amostra"].idxmin(), "lambda"]) & \
-        out["lambda"].isin([min(lambdas), max(lambdas)])
-    return out
-
-
-def calibrar_encolhimento(df: pd.DataFrame, fatores: list[str], penalizados: list[str], lambdas,
-                          k: int = 5, semente: int = 2026, inicial: float = 100.0) -> tuple[dict, pd.DataFrame]:
-    """Escolhe um lambda por fator penalizado, um de cada vez (busca coordenada, duas voltas).
-    Devolve ({fator: lambda}, histórico). Avisa se o ótimo ficou no limite da grade."""
-    import warnings
-    lam = {f: inicial for f in penalizados}
-    hist = []
-    for volta in (1, 2):
-        for f in penalizados:
-            outros = {g: v for g, v in lam.items() if g != f}
-            cv = escolher_lambda_pg(df, fatores, f, lambdas, k, semente, outros).assign(volta=volta)
-            lam[f] = float(cv.loc[cv["deviance_fora_amostra"].idxmin(), "lambda"])
-            hist.append(cv)
-    h = pd.concat(hist, ignore_index=True)
-    for f, v in lam.items():
-        if v == max(lambdas):
-            warnings.warn(f"lambda de '{f}' no limite superior da grade ({v}): o fator está sendo levado a ~1. "
-                          "Considere ampliar a grade ou retirar o fator.")
-    return lam, h
-
-
-def subsidio_cruzado(cel: pd.DataFrame, res: ResultadoModelo, custo_verdadeiro: pd.Series) -> float:
-    """Dispersão (RMSE do log, ponderado pelo custo) entre o prêmio puro manual previsto e o custo
-    esperado verdadeiro de cada grupo, depois de igualar o nível da carteira. Mede quanto um grupo
-    paga por outro por erro de ESTRUTURA da taxa manual (o nível geral é calibrado à parte).
-
-    custo_verdadeiro: Series indexada por id_estipulante, em R$ (sem o efeito aleatório do grupo).
+    custo esperado da vida = capital x q_x(idade na data, sexo) x A/E base x fator da seção
+                             x fator da divisão x (capital / capital_ref)^elasticidade x fatores categóricos
     """
-    prev = cel.assign(p=cel["valor_esperado"].to_numpy() * np.exp(res.desenho.matriz(cel) @ res.beta)) \
-              .groupby("id_estipulante")["p"].sum()
-    v = custo_verdadeiro.reindex(prev.index)
-    r = prev / v
-    r = r / np.average(r, weights=v)
-    return float(np.sqrt(np.average(np.log(r) ** 2, weights=v)))
+    v = vidas.copy()
+    data = pd.Timestamp(data_calculo)
+    v["idade"] = idade_completa(v["data_nascimento"], pd.Series(data, index=v.index)).astype(int)
+    v["q"] = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy())
+    avisos = []
+    f_sec = tabela["secao"].get(str(cnae_secao))
+    if f_sec is None:
+        f_sec = tabela["secao_nao_vista"]
+        avisos.append(f"seção {cnae_secao} sem experiência: usada a média da carteira")
+    chave_div = f"{cnae_secao}:{cnae_divisao}"
+    f_div = tabela["divisao"].get(chave_div)
+    if f_div is None:
+        f_div = tabela["divisao_nao_vista"]
+        avisos.append(f"divisão {chave_div} sem experiência: usada a média da seção")
+    cap = tabela["capital"]
+    f_cap = (v["capital"] / cap["referencia"]) ** cap["elasticidade"]
+    mult = tabela["ae_base"] * f_sec * f_div * f_cap.to_numpy()
+    fx = tabela["faixas"]
+    deriv = {"faixa_idade": _faixa(v["idade"], fx["idade"]), "sexo": v["sexo"].astype(str),
+             "faixa_tamanho": pd.Series(str(_faixa(pd.Series([len(v)]), fx["tamanho"]).iloc[0]), index=v.index)}
+    for fator, mapa in tabela.get("fatores_categoricos", {}).items():
+        valores = deriv[fator].map(mapa)
+        if valores.isna().any():
+            avisos.append(f"{fator}: níveis sem fator {sorted(deriv[fator][valores.isna()].unique())} (usado 1)")
+        mult = mult * valores.fillna(1.0).to_numpy()
+    v["q_ajustado"] = v["q"] * mult
+    v["custo_esperado"] = v["capital"] * v["q_ajustado"]
+    taxa_anual = 1000 * v["custo_esperado"].sum() / v["capital"].sum()
+    return {"taxa_pura_anual_mil": float(taxa_anual), "taxa_pura_mensal_mil": float(taxa_anual / 12),
+            "premio_puro_anual": float(v["custo_esperado"].sum()), "capital_total": float(v["capital"].sum()),
+            "vidas": int(len(v)), "obitos_esperados": float(v["q_ajustado"].sum()),
+            "fator_atividade": float(f_sec * f_div), "avisos": avisos, "detalhe": v}

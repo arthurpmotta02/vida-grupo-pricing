@@ -72,7 +72,10 @@ def validar_estipulantes(e: pd.DataFrame, log: _Log) -> pd.DataFrame:
                  "id_estipulante duplicado", "alta", "excluir")
     e = _aplicar(e, e["data_inicio_vigencia"].isna(), log, "E02", t,
                  "início de vigência ausente/inválido", "alta", "excluir")
-    e = _aplicar(e, e["setor"].isna(), log, "E03", t, "setor ausente", "media", "sinalizar")
+    e = _aplicar(e, e["cnae_secao"].isna(), log, "E03", t, "seção CNAE ausente (sem fator de atividade)",
+                 "media", "sinalizar")
+    e = _aplicar(e, e["cnae_secao"].notna() & e["cnae_divisao"].isna(), log, "E04", t,
+                 "divisão CNAE ausente (usa o fator da seção)", "baixa", "sinalizar")
     return e
 
 

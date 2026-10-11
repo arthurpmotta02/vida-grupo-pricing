@@ -12,14 +12,31 @@ rotatividade_anual: 0.15
 crescimento_anual_sd: 0.05
 proporcao_afastados: 0.005
 
-setores:                                # fator_mortalidade multiplica a tábua
-  servicos:    {peso: 0.30, fator_mortalidade: 1.00, idade_media: 37, prop_masc: 0.50}
-  comercio:    {peso: 0.15, fator_mortalidade: 1.05, idade_media: 33, prop_masc: 0.50}
-  industria:   {peso: 0.20, fator_mortalidade: 1.15, idade_media: 39, prop_masc: 0.70}
-  construcao:  {peso: 0.08, fator_mortalidade: 1.35, idade_media: 38, prop_masc: 0.90}
-  transporte:  {peso: 0.07, fator_mortalidade: 1.30, idade_media: 42, prop_masc: 0.85}
-  financeiro:  {peso: 0.10, fator_mortalidade: 0.85, idade_media: 36, prop_masc: 0.45}
-  adm_publica: {peso: 0.10, fator_mortalidade: 0.95, idade_media: 45, prop_masc: 0.45}
+# Atividade econômica pela CNAE 2.0: seção (letra) e divisão (2 dígitos). Os códigos são reais;
+# fatores de mortalidade, pesos e perfis são HIPÓTESES do gerador. Cada divisão recebe ainda um
+# desvio aleatório em torno da seção (lognormal, média 1, desvio sigma_divisao).
+secoes:
+  C: {nome: "Indústrias de transformação", peso: 0.18, fator_mortalidade: 1.15, idade_media: 39, prop_masc: 0.70,
+      divisoes: ["10", "13", "20", "22", "25", "28", "29"]}
+  F: {nome: "Construção", peso: 0.08, fator_mortalidade: 1.35, idade_media: 38, prop_masc: 0.90,
+      divisoes: ["41", "42", "43"]}
+  G: {nome: "Comércio", peso: 0.14, fator_mortalidade: 1.05, idade_media: 33, prop_masc: 0.50,
+      divisoes: ["45", "46", "47"]}
+  H: {nome: "Transporte, armazenagem e correio", peso: 0.07, fator_mortalidade: 1.30, idade_media: 42, prop_masc: 0.85,
+      divisoes: ["49", "52", "53"]}
+  K: {nome: "Atividades financeiras", peso: 0.09, fator_mortalidade: 0.85, idade_media: 36, prop_masc: 0.45,
+      divisoes: ["64", "65", "66"]}
+  M: {nome: "Atividades profissionais, científicas e técnicas", peso: 0.08, fator_mortalidade: 0.90, idade_media: 36, prop_masc: 0.50,
+      divisoes: ["69", "70", "71", "73"]}
+  N: {nome: "Atividades administrativas e serviços complementares", peso: 0.14, fator_mortalidade: 1.00, idade_media: 37, prop_masc: 0.50,
+      divisoes: ["77", "78", "80", "81", "82"]}
+  O: {nome: "Administração pública", peso: 0.09, fator_mortalidade: 0.95, idade_media: 45, prop_masc: 0.45,
+      divisoes: ["84"]}
+  P: {nome: "Educação", peso: 0.05, fator_mortalidade: 0.90, idade_media: 40, prop_masc: 0.30,
+      divisoes: ["85"]}
+  Q: {nome: "Saúde humana e serviços sociais", peso: 0.08, fator_mortalidade: 1.00, idade_media: 38, prop_masc: 0.25,
+      divisoes: ["86", "87", "88"]}
+sigma_divisao: 0.10
 
 idade: {sd: 10, min_entrada: 18, max_entrada: 70}
 
