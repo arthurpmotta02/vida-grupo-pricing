@@ -147,7 +147,7 @@ class ResultadoModelo:
                                "relatividade": np.exp(b), "ep_log": e,
                                "ic_inf": np.exp(b - 1.96 * e) if e == e else np.nan,
                                "ic_sup": np.exp(b + 1.96 * e) if e == e else np.nan})
-        out = pd.DataFrame(linhas)
+        out = pd.DataFrame(linhas, columns=["fator", "nivel", "base", "relatividade", "ep_log", "ic_inf", "ic_sup"])
         b0 = coef["(intercepto)"] + sum(coef.get(f"{f}[{self.desenho.base[f]}]", 0.0) for f in self.desenho.fatores)
         out.attrs["ae_base"] = float(np.exp(b0))
         return out
@@ -238,7 +238,7 @@ def escolher_lambda(df, fatores, lambdas, k=5, semente=2026) -> pd.DataFrame:
 
 # --------------------------------------------------------------------------- 3. Poisson-Gama
 
-def _nll_poisson_gama(theta, X, N, logE, g_idx, n_grupos):
+def _nll_poisson_gama(theta, X, N, logE, g_idx, n_grupos, pen=None):
     b, loga = theta[:-1], theta[-1]
     a = np.exp(loga)
     eta = logE + X @ b
@@ -250,18 +250,31 @@ def _nll_poisson_gama(theta, X, N, logE, g_idx, n_grupos):
     w = ((a + Ni) / (a + Mi))[g_idx]                       # média a posteriori de u_i, por linha
     grad_b = X.T @ (N - w * mu)
     dll_da = np.sum(digamma(a + Ni) - digamma(a) + np.log(a) + 1 - np.log(a + Mi) - (a + Ni) / (a + Mi))
+    if pen is not None:                                   # ridge: equivale a priori N(0, 1/lambda) no log-fator
+        ll -= 0.5 * np.sum(pen * b * b)
+        grad_b = grad_b - pen * b
     return -ll, -np.r_[grad_b, a * dll_da]
 
 
 def ajustar_poisson_gama(df: pd.DataFrame, fatores: list[str], grupo: str = "id_estipulante",
-                         beta_inicial: np.ndarray | None = None) -> ResultadoModelo:
+                         beta_inicial: np.ndarray | None = None,
+                         penalizacao: dict[str, float] | None = None) -> ResultadoModelo:
+    """penalizacao: {fator: lambda}. Encolhe os níveis desse fator para o nível base (fator 1),
+    o que equivale a uma priori Normal(0, 1/lambda) no log do fator (estimativa MAP)."""
     d = Desenho.criar(df, fatores)
     X, N, logE = d.matriz(df), df["N"].to_numpy(float), np.log(df["E"].to_numpy())
     codigos, grupos = pd.factorize(df[grupo])
+    pen = None
+    if penalizacao:
+        pen = np.zeros(X.shape[1])
+        for j, c in enumerate(d.colunas):
+            for f, lam in penalizacao.items():
+                if c.startswith(f"{f}["):
+                    pen[j] = lam
     b0 = beta_inicial if beta_inicial is not None else np.r_[np.log(N.sum() / np.exp(logE).sum()),
                                                              np.zeros(X.shape[1] - 1)]
     th0 = np.r_[b0, np.log(10.0)]
-    args = (X, N, logE, codigos, len(grupos))
+    args = (X, N, logE, codigos, len(grupos), pen)
     opt = minimize(_nll_poisson_gama, th0, args=args, jac=True, method="L-BFGS-B",
                    options={"maxiter": 5000, "gtol": 1e-7})
     th = opt.x
@@ -279,9 +292,14 @@ def ajustar_poisson_gama(df: pd.DataFrame, fatores: list[str], grupo: str = "id_
     g = pd.DataFrame({"g": grupos[codigos], "N": N, "M": mu}).groupby("g")[["N", "M"]].sum()
     g["Z"] = g["M"] / (g["M"] + a)
     g["fator_grupo_posteriori"] = (a + g["N"]) / (a + g["M"])
+    ll = float(-_nll_poisson_gama(th, X, N, logE, codigos, len(grupos), None)[0])   # sem o termo de penalização
+    ll_completa = ll - float(np.sum(gammaln(N + 1)))       # mesma base do statsmodels (inclui -log N!)
+    n_par = X.shape[1] + 1
     return ResultadoModelo("Poisson-Gama (efeito de estipulante)", d, th[:-1], ep[:-1], {
         "k": a, "ep_log_k": float(ep[-1]), "ic_k": (a * np.exp(-1.96 * ep[-1]), a * np.exp(1.96 * ep[-1])),
-        "cv_efeito_grupo": float(1 / np.sqrt(a)), "loglik": float(-opt.fun), "convergiu": bool(opt.success),
+        "cv_efeito_grupo": float(1 / np.sqrt(a)), "loglik": ll, "loglik_completa": ll_completa,
+        "aic": -2 * ll_completa + 2 * n_par, "n_parametros": n_par, "penalizacao": penalizacao or {},
+        "convergiu": bool(opt.success),
         "grupos": g.reset_index().rename(columns={"g": grupo})})
 
 
@@ -394,3 +412,100 @@ def carregar_tabela(caminho) -> dict:
     import yaml
     with open(caminho, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+
+# --------------------------------------------------------------------------- comparação de dispersão
+
+def comparar_dispersao(df: pd.DataFrame, fatores: list[str]) -> pd.DataFrame:
+    """Poisson, Binomial Negativa (NB2, dispersão por célula) e Poisson-Gama (dispersão por grupo),
+    com log-verossimilhanças na mesma base (incluindo -log N!), para comparar por AIC.
+    NB2 e Poisson-Gama não são aninhados: a comparação é por AIC, não por teste LR."""
+    import statsmodels.api as sm
+    glm = ajustar_glm(df, fatores)
+    X = glm.desenho.matriz(df)
+    nb = sm.NegativeBinomial(df["N"].to_numpy(), X, offset=np.log(df["E"].to_numpy()), loglike_method="nb2")
+    rnb = nb.fit(start_params=np.append(glm.beta, 0.1), disp=0, maxiter=500)
+    pg = ajustar_poisson_gama(df, fatores, beta_inicial=glm.beta)
+    p = X.shape[1]
+    linhas = [
+        {"modelo": "Poisson", "onde fica a dispersão": "nenhuma", "loglik": glm.extra["loglik"], "parametros": p},
+        {"modelo": "Binomial Negativa (NB2)", "onde fica a dispersão": "célula (independente)",
+         "loglik": float(rnb.llf), "parametros": p + 1},
+        {"modelo": "Poisson-Gama", "onde fica a dispersão": "estipulante (compartilhada pelas células)",
+         "loglik": pg.extra["loglik_completa"], "parametros": p + 1},
+    ]
+    out = pd.DataFrame(linhas)
+    out["AIC"] = -2 * out["loglik"] + 2 * out["parametros"]
+    out["dif_AIC_vs_melhor"] = out["AIC"] - out["AIC"].min()
+    return out
+
+
+def ajustar_nb2(df: pd.DataFrame, fatores: list[str]) -> ResultadoModelo:
+    """NB2 nas células (statsmodels), embrulhada como ResultadoModelo para comparação."""
+    import statsmodels.api as sm
+    glm = ajustar_glm(df, fatores)
+    X = glm.desenho.matriz(df)
+    r = sm.NegativeBinomial(df["N"].to_numpy(), X, offset=np.log(df["E"].to_numpy()),
+                            loglike_method="nb2").fit(start_params=np.append(glm.beta, 0.1), disp=0, maxiter=500)
+    return ResultadoModelo("Binomial Negativa (NB2)", glm.desenho, r.params[:-1], r.bse[:-1],
+                           {"alpha": float(r.params[-1]), "loglik": float(r.llf)})
+
+
+def escolher_lambda_pg(df: pd.DataFrame, fatores: list[str], fator_penalizado: str, lambdas,
+                       k: int = 5, semente: int = 2026, penalizacao_fixa: dict | None = None) -> pd.DataFrame:
+    """Escolhe o encolhimento de UM fator no Poisson-Gama por validação cruzada deixando grupos de
+    fora (os demais fatores penalizados ficam em `penalizacao_fixa`). A deviance é medida nas
+    CÉLULAS dos grupos deixados de fora: é ali que a estrutura do fator é testada."""
+    fold = _folds_por_grupo(df, k, semente)
+    linhas = []
+    for lam in lambdas:
+        pen = {**(penalizacao_fixa or {}), fator_penalizado: lam}
+        pen = {f: l for f, l in pen.items() if l > 0} or None
+        dev = 0.0
+        for i in range(k):
+            tr, te = df[fold != i], df[fold == i]
+            r = ajustar_poisson_gama(tr, fatores, penalizacao=pen)
+            dev += _deviance_poisson(te["N"], r.mu(te))
+        linhas.append({"fator": fator_penalizado, "lambda": lam, "deviance_fora_amostra": dev})
+    out = pd.DataFrame(linhas)
+    out["dif_vs_melhor"] = out["deviance_fora_amostra"] - out["deviance_fora_amostra"].min()
+    out["no_limite_da_grade"] = out["lambda"].eq(out.loc[out["deviance_fora_amostra"].idxmin(), "lambda"]) & \
+        out["lambda"].isin([min(lambdas), max(lambdas)])
+    return out
+
+
+def calibrar_encolhimento(df: pd.DataFrame, fatores: list[str], penalizados: list[str], lambdas,
+                          k: int = 5, semente: int = 2026, inicial: float = 100.0) -> tuple[dict, pd.DataFrame]:
+    """Escolhe um lambda por fator penalizado, um de cada vez (busca coordenada, duas voltas).
+    Devolve ({fator: lambda}, histórico). Avisa se o ótimo ficou no limite da grade."""
+    import warnings
+    lam = {f: inicial for f in penalizados}
+    hist = []
+    for volta in (1, 2):
+        for f in penalizados:
+            outros = {g: v for g, v in lam.items() if g != f}
+            cv = escolher_lambda_pg(df, fatores, f, lambdas, k, semente, outros).assign(volta=volta)
+            lam[f] = float(cv.loc[cv["deviance_fora_amostra"].idxmin(), "lambda"])
+            hist.append(cv)
+    h = pd.concat(hist, ignore_index=True)
+    for f, v in lam.items():
+        if v == max(lambdas):
+            warnings.warn(f"lambda de '{f}' no limite superior da grade ({v}): o fator está sendo levado a ~1. "
+                          "Considere ampliar a grade ou retirar o fator.")
+    return lam, h
+
+
+def subsidio_cruzado(cel: pd.DataFrame, res: ResultadoModelo, custo_verdadeiro: pd.Series) -> float:
+    """Dispersão (RMSE do log, ponderado pelo custo) entre o prêmio puro manual previsto e o custo
+    esperado verdadeiro de cada grupo, depois de igualar o nível da carteira. Mede quanto um grupo
+    paga por outro por erro de ESTRUTURA da taxa manual (o nível geral é calibrado à parte).
+
+    custo_verdadeiro: Series indexada por id_estipulante, em R$ (sem o efeito aleatório do grupo).
+    """
+    prev = cel.assign(p=cel["valor_esperado"].to_numpy() * np.exp(res.desenho.matriz(cel) @ res.beta)) \
+              .groupby("id_estipulante")["p"].sum()
+    v = custo_verdadeiro.reindex(prev.index)
+    r = prev / v
+    r = r / np.average(r, weights=v)
+    return float(np.sqrt(np.average(np.log(r) ** 2, weights=v)))

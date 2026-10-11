@@ -140,3 +140,53 @@ def test_tabela_salva_e_recarrega_igual(tmp_path):
     lida = M.carregar_tabela(tmp_path / "f.yaml")
     assert lida["fatores"]["setor"] == pytest.approx(tab["fatores"]["setor"])
     assert lida["meta"]["ae_base"] == pytest.approx(tab["meta"]["ae_base"])
+
+
+def _celulas_com_capital(n_grupos=300, k=8.0, semente=3):
+    df = _celulas(n_grupos=n_grupos, k=k, semente=semente)
+    df["faixa_capital"] = np.where(df["ruido"] == "a", "baixo", "alto")
+    return df
+
+
+def test_encolhimento_lambda_zero_igual_sem_penalizacao_e_alto_leva_a_um():
+    df = _celulas_com_capital()
+    livre = M.ajustar_poisson_gama(df, ["setor", "faixa_capital"])
+    zero = M.ajustar_poisson_gama(df, ["setor", "faixa_capital"], penalizacao={"faixa_capital": 0.0})
+    assert np.allclose(livre.beta, zero.beta, atol=1e-6)
+    forte = M.ajustar_poisson_gama(df, ["setor", "faixa_capital"], penalizacao={"faixa_capital": 1e7}).fatores()
+    cap = forte[forte["fator"] == "faixa_capital"]["relatividade"]
+    assert np.allclose(cap, 1.0, atol=1e-3)
+    setor = forte[forte["fator"] == "setor"].set_index("nivel")["relatividade"]
+    assert setor["s1"] / setor["s0"] > 1.2                     # o outro fator não é afetado
+
+
+def test_loglik_completa_coincide_com_statsmodels_sem_heterogeneidade():
+    df = _celulas(n_grupos=300, k=1e7)
+    glm = M.ajustar_glm(df, ["setor"])
+    pg = M.ajustar_poisson_gama(df, ["setor"], beta_inicial=glm.beta)
+    assert pg.extra["loglik_completa"] == pytest.approx(glm.extra["loglik"], abs=0.05)
+
+
+def test_comparar_dispersao_prefere_efeito_de_grupo_quando_ele_existe():
+    df = _celulas(n_grupos=500, k=3.0)
+    tab = M.comparar_dispersao(df, ["setor"]).set_index("modelo")
+    assert tab["AIC"].idxmin() == "Poisson-Gama"
+    assert tab.loc["Poisson", "AIC"] > tab.loc["Binomial Negativa (NB2)", "AIC"]
+
+
+@pytest.mark.filterwarnings("ignore:lambda de")
+def test_calibrar_encolhimento_devolve_lambda_por_fator():
+    df = _celulas_com_capital(n_grupos=150)
+    lam, hist = M.calibrar_encolhimento(df, ["setor", "faixa_capital"], ["setor", "faixa_capital"],
+                                        [0.0, 10, 1000], k=3)
+    assert set(lam) == {"setor", "faixa_capital"}
+    assert set(hist["fator"]) == {"setor", "faixa_capital"}
+
+
+def test_subsidio_cruzado_zero_quando_estrutura_e_exata():
+    df = _celulas(n_grupos=60, k=1e7)
+    df["valor_esperado"] = df["E"] * 1000.0
+    r = M.ajustar_poisson_gama(df, ["setor"])
+    rel = r.fatores().set_index("nivel")["relatividade"]
+    verdade = (df["valor_esperado"] * df["setor"].map(rel)).groupby(df["id_estipulante"]).sum()
+    assert M.subsidio_cruzado(df, r, verdade) == pytest.approx(0.0, abs=1e-10)

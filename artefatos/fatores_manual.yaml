@@ -6,11 +6,18 @@ meta:
   corte_experiencia: '2024-12-31'
   obitos: 1396
   esperados_tabua: 1443.25
-  k_credibilidade: 9.118
+  k_credibilidade: 8.6
   k_ic95:
-  - 5.348
-  - 15.546
-  selecao: eliminação para trás, razão de verossimilhança, alfa = 5%
+  - 5.076
+  - 14.57
+  metodo_k: máxima verossimilhança marginal (Bayes empírico); incerteza do k não propagada
+  fatores_obrigatorios:
+  - setor
+  - faixa_capital
+  encolhimento_lambda:
+    setor: 30.0
+    faixa_capital: 300.0
+  selecao_demais_fatores: razão de verossimilhança, alfa = 0.05
   fatores_testados:
   - faixa_idade
   - sexo
@@ -59,15 +66,22 @@ meta:
       - 500-1999
       - 2000+
   modelo: Poisson-Gama (efeito de estipulante)
-  ae_base: 0.8663744381861486
+  ae_base: 0.9173666568165539
   fatores_no_modelo:
   - setor
+  - faixa_capital
 fatores:
   setor:
-    adm_publica: 0.944486582377751
-    comercio: 1.052960952370678
-    construcao: 1.4557181473658396
-    financeiro: 0.8681017642640577
-    industria: 1.276101678070919
+    adm_publica: 0.9168947634169415
+    comercio: 0.9925772044748025
+    construcao: 1.2056763692989112
+    financeiro: 0.8678760435735247
+    industria: 1.151907966521341
     servicos: 1.0
-    transporte: 1.5811661253928508
+    transporte: 1.2732653619531917
+  faixa_capital:
+    150-400k: 0.9950694675065106
+    30-60k: 1.0
+    60-150k: 0.9999919613322208
+    acima400k: 0.9900019142566744
+    ate30k: 1.0352930409762306

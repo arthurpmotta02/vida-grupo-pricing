@@ -164,7 +164,7 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
             pecas.append(pd.DataFrame({
                 "id_estipulante": eid, "vid": todos["vid"], "data_nascimento": todos["nasc"],
                 "sexo": todos["sexo"], "data_inicio": ini, "data_fim": fim, "capital": todos["capital"],
-                "em_vigor": fica & (pe64 == data_ref)}))
+                "em_vigor": fica & (pe64 == data_ref), "mult_renda": todos["mult_renda"]}))
 
             # prêmio do ano: taxa x capital-ano
             cap_ano = np.sum(todos["capital"] * ((fim - ini).astype(int) + 1) / DIA_ANO)
@@ -195,7 +195,10 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
         verdade.append({"id_estipulante": eid, "setor": setor, "fator_setor": f_setor, "fator_grupo": f_grupo,
                         "fator_verdadeiro": fator, "tamanho_inicial": tamanho, "anos": n_anos, "tipo_capital": tipo})
 
-    vidas = _montar_segmentos(pd.concat(pecas, ignore_index=True))
+    todas_pecas = pd.concat(pecas, ignore_index=True)
+    verdade_vidas = todas_pecas.groupby(["id_estipulante", "vid"], as_index=False)["mult_renda"].first()
+    verdade_vidas["id_vida"] = verdade_vidas["id_estipulante"] + "-V" + verdade_vidas.pop("vid").astype(str).str.zfill(6)
+    vidas = _montar_segmentos(todas_pecas.drop(columns="mult_renda"))
     # afastados: escolhidos entre vidas em vigor sem sinistro
     em_vigor = vidas.loc[vidas["data_fim"].isna(), ["id_estipulante", "id_vida"]].drop_duplicates()
     n_af = int(round(cfg["proporcao_afastados"] * len(em_vigor)))
@@ -230,6 +233,7 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
     est_df.insert(0, "id_linha", np.arange(1, len(est_df) + 1))
     return {"estipulantes": est_df, "vidas": vidas, "sinistros": s, "premios": premios_df,
             "verdade_estipulantes": pd.DataFrame(verdade),
+            "verdade_vidas": verdade_vidas[["id_estipulante", "id_vida", "mult_renda"]],
             "verdade_ibnr": verdade_ibnr.drop(columns=["dias_pag", "negado"], errors="ignore").reset_index(drop=True)}
 
 

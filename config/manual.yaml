@@ -15,3 +15,16 @@ ridge:
   lambdas: [0.0, 1, 3, 10, 30, 100, 300]   # candidatos; escolha por validação cruzada por grupo
   folds: 5
 semente_cv: 2026
+
+# Fatores de tarifa por decisão de negócio (prática de mercado em vida em grupo):
+# - setor/atividade: fator padrão de subscrição em vida e AP;
+# - faixa de capital: a mortalidade cai com o capital e o prêmio é em R$; retirar o fator por falta de
+#   poder estatístico cria subsídio cruzado entre grupos.
+# Ficam no modelo independentemente de p-valor, mas ESTIMADOS COM ENCOLHIMENTO para o nível base
+# (equivale a credibilidade por nível): com pouca evidência, o fator fica perto de 1.
+# Os demais fatores (idade, sexo, porte) só entram com evidência estatística (LR, 5%).
+fatores_obrigatorios: ["setor", "faixa_capital"]
+encolhimento:
+  lambdas: [0.0, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000]
+  folds: 5
+alfa_selecao: 0.05

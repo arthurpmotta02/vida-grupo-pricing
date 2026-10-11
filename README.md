@@ -25,10 +25,11 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 - [x] **Etapa 1: dados.** Leitura (Excel, CSV ou parquet) com mapeamento de colunas; 26 regras de
   qualidade com log auditável; exposição em vidas-ano e capital-ano; óbitos e valores esperados; número
   efetivo de óbitos ponderado por capital; conciliação de prêmio; gerador sintético.
-- [x] **Etapa 2: taxa manual.** Modelo de A/E sobre a BR-EMSmt 2026 com efeito aleatório de
-  estipulante (Poisson-Gama, verossimilhança exata), comparado com GLM, Binomial Negativa e ridge;
-  seleção de fatores por razão de verossimilhança; estudo de simulação com 12 carteiras; tabela de
-  fatores versionada em `artefatos/fatores_manual.yaml`; função de taxa pura para um censo de vidas.
+- [x] **Etapa 2: taxa manual.** A/E sobre a BR-EMSmt 2026 com efeito aleatório de estipulante
+  (Poisson-Gama, verossimilhança exata, Bayes empírico), comparado com GLM, Binomial Negativa e ridge.
+  Setor e faixa de capital são fatores de tarifa obrigatórios, estimados com encolhimento calibrado
+  por validação cruzada; idade, sexo e porte só entram com evidência estatística. Estudo de simulação
+  com 12 carteiras; tabela versionada em `artefatos/fatores_manual.yaml`; taxa pura para um censo.
 - [ ] Etapa 3: renovação (Bühlmann-Straub, pooling de sinistros grandes, IBNR, regra por faixa)
 - [ ] Etapa 4: camada bayesiana (PyMC)
 - [ ] Etapa 5: validação e backtest
@@ -38,9 +39,9 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 72 testes (1 só roda com o arquivo oficial da SUSEP presente)
+pytest                                   # 77 testes (1 só roda com o arquivo oficial da SUSEP presente)
 jupyter lab                              # rode notebooks/01_dados e depois 02_taxa_manual
-python scripts/estudo_simulacao_manual.py   # opcional (~6 min): refaz o estudo de simulação
+python scripts/estudo_simulacao_manual.py   # opcional (~8 min): refaz o estudo de simulação
 ```
 
 **Tábua.** O pipeline usa a BR-EMSmt 2026 oficial, lida direto do arquivo publicado pela SUSEP e
@@ -68,8 +69,13 @@ se os nomes de coluna forem outros.
   os fatores previu grupos novos pior que a própria tábua, e o intervalo de 95% dele acertou só ~80% das
   vezes. O modelo com efeito de grupo e fatores selecionados previu melhor e teve cobertura de ~94%.
   Além disso, ele estima o k de credibilidade usado na renovação.
-- **Como um fator entra na tabela de preço?** Por teste de razão de verossimilhança (5%). Idade e sexo
-  já estão na tábua; o teste mede só o desvio adicional.
+- **Como um fator entra na tabela de preço?** Setor e faixa de capital entram por decisão de negócio,
+  com encolhimento (com pouca evidência, o fator fica perto de 1). Os demais só com teste de razão de
+  verossimilhança a 5%. No estudo, a seleção só por p-valor foi instável (a mesma regra escolheu
+  estruturas diferentes em carteiras com as mesmas hipóteses), e a abordagem adotada teve o menor
+  subsídio cruzado entre grupos e a melhor previsão de grupos novos.
+- **O k é bayesiano?** É Bayes empírico: estimado por máxima verossimilhança e tratado como conhecido.
+  A incerteza do k entra no preço na Etapa 4 (bayesiano completo).
 - **O pipeline corrige dados sozinho?** Não. Toda exclusão ou sinalização vai para o log de exceções,
   com a regra e a linha de origem.
 
