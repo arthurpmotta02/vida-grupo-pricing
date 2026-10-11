@@ -1,0 +1,73 @@
+meta:
+  gerado_em: '2026-10-11'
+  fonte_dados: carteira sintética
+  tabua: BR-EMSmt-2026
+  tabua_sha256: 45a1565083c77042187c1364a58d0f27d90208f140124394d179fb2b8cd70541
+  corte_experiencia: '2024-12-31'
+  obitos: 1396
+  esperados_tabua: 1443.25
+  k_credibilidade: 9.118
+  k_ic95:
+  - 5.348
+  - 15.546
+  selecao: eliminação para trás, razão de verossimilhança, alfa = 5%
+  fatores_testados:
+  - faixa_idade
+  - sexo
+  - setor
+  - faixa_capital
+  - faixa_tamanho
+  faixas:
+    idade:
+      limites:
+      - 0
+      - 30
+      - 40
+      - 50
+      - 60
+      - 200
+      rotulos:
+      - ate29
+      - 30-39
+      - 40-49
+      - 50-59
+      - 60+
+    capital:
+      limites:
+      - 0
+      - 30000
+      - 60000
+      - 150000
+      - 400000
+      - .inf
+      rotulos:
+      - ate30k
+      - 30-60k
+      - 60-150k
+      - 150-400k
+      - acima400k
+    tamanho:
+      limites:
+      - 0
+      - 100
+      - 500
+      - 2000
+      - .inf
+      rotulos:
+      - ate99
+      - 100-499
+      - 500-1999
+      - 2000+
+  modelo: Poisson-Gama (efeito de estipulante)
+  ae_base: 0.8663744381861486
+  fatores_no_modelo:
+  - setor
+fatores:
+  setor:
+    adm_publica: 0.944486582377751
+    comercio: 1.052960952370678
+    construcao: 1.4557181473658396
+    financeiro: 0.8681017642640577
+    industria: 1.276101678070919
+    servicos: 1.0
+    transporte: 1.5811661253928508

@@ -23,6 +23,11 @@ setores:                                # fator_mortalidade multiplica a tábua
 
 idade: {sd: 10, min_entrada: 18, max_entrada: 70}
 
+# Gradiente de renda (hipótese): mortalidade individual x (salário/mediana)^(-elasticidade),
+# normalizado para média 1. Faz a faixa de capital ter efeito nos grupos de múltiplo salarial,
+# como se observa em estudos de experiência ponderados por capital.
+gradiente_renda: {elasticidade: 0.15}
+
 capital:
   tipos: {uniforme: 0.40, multiplo_salarial: 0.40, escalonado: 0.20}
   uniforme_valores: [10000, 20000, 30000, 50000, 100000]

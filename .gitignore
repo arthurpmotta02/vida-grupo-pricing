@@ -2,7 +2,9 @@
 data/raw/
 data/external/*.xlsx
 !data/external/README.md
-data/synthetic/*.parquet
+data/synthetic/*
+!data/synthetic/.gitkeep
+resultados/estudo_partes/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/

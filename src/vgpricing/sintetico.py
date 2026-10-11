@@ -52,8 +52,10 @@ class _Grupo:
         nivel = rng.choice(len(c["escalonado_niveis"]), size=k, p=c["escalonado_probs"])
         ids = np.arange(self.prox_id, self.prox_id + k)
         self.prox_id += k
+        e = cfg.get("gradiente_renda", {}).get("elasticidade", 0.0)
+        mult_renda = (salario / c["salario_mediana"]) ** (-e) / np.exp((e * c["salario_sigma"]) ** 2 / 2)
         return {"vid": ids, "nasc": nasc.astype("datetime64[D]"), "sexo": sexo,
-                "salario": salario, "nivel": nivel}
+                "salario": salario, "nivel": nivel, "mult_renda": mult_renda}
 
     def capital(self, salario, nivel):
         c = self.cfg["capital"]
@@ -142,7 +144,7 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
             n = len(offset)
             ini = ps64 + offset.astype("timedelta64[D]")
             idade = _idade_np(todos["nasc"], ini)
-            q = np.minimum(tabua.q(idade, todos["sexo"]) * fator, 0.999)
+            q = np.minimum(tabua.q(idade, todos["sexo"]) * fator * todos["mult_renda"], 0.999)
             mu = -np.log(1 - q)
             td = rng.exponential(1 / mu) * DIA_ANO
             te = rng.exponential(1 / lam, n) * DIA_ANO

@@ -1,0 +1,17 @@
+# Etapa 2: taxa manual. Faixas e escolhas de modelagem.
+
+meses_maturacao: 12        # experiência só até data_referencia - 12 meses (evita IBNR na estimação)
+
+faixas:
+  idade:   {limites: [0, 30, 40, 50, 60, 200], rotulos: ["ate29", "30-39", "40-49", "50-59", "60+"]}
+  capital: {limites: [0, 30000, 60000, 150000, 400000, .inf],
+            rotulos: ["ate30k", "30-60k", "60-150k", "150-400k", "acima400k"]}
+  tamanho: {limites: [0, 100, 500, 2000, .inf], rotulos: ["ate99", "100-499", "500-1999", "2000+"]}
+
+# Fatores do modelo. O nível base de cada um é o de maior exposição (escolhido nos dados).
+fatores: ["faixa_idade", "sexo", "setor", "faixa_capital", "faixa_tamanho"]
+
+ridge:
+  lambdas: [0.0, 1, 3, 10, 30, 100, 300]   # candidatos; escolha por validação cruzada por grupo
+  folds: 5
+semente_cv: 2026
