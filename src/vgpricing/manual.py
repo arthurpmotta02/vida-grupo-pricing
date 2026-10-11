@@ -267,6 +267,41 @@ def carregar_tabela(caminho) -> dict:
 
 # --------------------------------------------------------------------------- taxa pura
 
+def multiplicador_manual(df: pd.DataFrame, tabela: dict) -> tuple[np.ndarray, list[str]]:
+    """Fator A/E da taxa manual para cada linha (vida ou pedaço de exposição).
+
+    df precisa de: capital, cnae_secao, cnae_divisao e, se a tabela tiver fatores categóricos,
+    as colunas correspondentes (idade para faixa_idade, sexo, faixa_tamanho).
+    Devolve (multiplicador, avisos)."""
+    avisos = []
+    sec = df["cnae_secao"].astype(str)
+    f_sec = sec.map(tabela["secao"])
+    if f_sec.isna().any():
+        avisos.append(f"seções sem experiência {sorted(sec[f_sec.isna()].unique())}: usada a média da carteira")
+    chave = sec + ":" + df["cnae_divisao"].astype("string").fillna("ND").astype(str)
+    f_div = chave.map(tabela["divisao"])
+    if f_div.isna().any():
+        avisos.append(f"divisões sem experiência {sorted(chave[f_div.isna()].unique())}: usada a média da seção")
+    cap = tabela["capital"]
+    mult = (tabela["ae_base"] * f_sec.fillna(tabela["secao_nao_vista"]).to_numpy()
+            * f_div.fillna(tabela["divisao_nao_vista"]).to_numpy()
+            * (df["capital"].to_numpy(float) / cap["referencia"]) ** cap["elasticidade"])
+    fx = tabela["faixas"]
+    for fator, mapa in tabela.get("fatores_categoricos", {}).items():
+        if fator == "faixa_idade":
+            col = _faixa(df["idade"], fx["idade"])
+        elif fator in df.columns:
+            col = df[fator].astype(str)
+        else:
+            avisos.append(f"{fator}: coluna ausente (usado 1)")
+            continue
+        valores = col.map(mapa)
+        if valores.isna().any():
+            avisos.append(f"{fator}: níveis sem fator {sorted(col[valores.isna()].unique())} (usado 1)")
+        mult = mult * valores.fillna(1.0).to_numpy()
+    return mult, avisos
+
+
 def taxa_pura_manual(vidas: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela: dict, tabua: Tabua,
                      data_calculo) -> dict:
     """Taxa pura anual e mensal por mil de capital para o censo de um grupo novo.
@@ -278,30 +313,16 @@ def taxa_pura_manual(vidas: pd.DataFrame, cnae_secao: str, cnae_divisao: str | N
     data = pd.Timestamp(data_calculo)
     v["idade"] = idade_completa(v["data_nascimento"], pd.Series(data, index=v.index)).astype(int)
     v["q"] = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy())
-    avisos = []
-    f_sec = tabela["secao"].get(str(cnae_secao))
-    if f_sec is None:
-        f_sec = tabela["secao_nao_vista"]
-        avisos.append(f"seção {cnae_secao} sem experiência: usada a média da carteira")
-    chave_div = f"{cnae_secao}:{cnae_divisao}"
-    f_div = tabela["divisao"].get(chave_div)
-    if f_div is None:
-        f_div = tabela["divisao_nao_vista"]
-        avisos.append(f"divisão {chave_div} sem experiência: usada a média da seção")
-    cap = tabela["capital"]
-    f_cap = (v["capital"] / cap["referencia"]) ** cap["elasticidade"]
-    mult = tabela["ae_base"] * f_sec * f_div * f_cap.to_numpy()
-    fx = tabela["faixas"]
-    deriv = {"faixa_idade": _faixa(v["idade"], fx["idade"]), "sexo": v["sexo"].astype(str),
-             "faixa_tamanho": pd.Series(str(_faixa(pd.Series([len(v)]), fx["tamanho"]).iloc[0]), index=v.index)}
-    for fator, mapa in tabela.get("fatores_categoricos", {}).items():
-        valores = deriv[fator].map(mapa)
-        if valores.isna().any():
-            avisos.append(f"{fator}: níveis sem fator {sorted(deriv[fator][valores.isna()].unique())} (usado 1)")
-        mult = mult * valores.fillna(1.0).to_numpy()
+    v["cnae_secao"], v["cnae_divisao"] = cnae_secao, cnae_divisao
+    v["faixa_tamanho"] = str(_faixa(pd.Series([len(v)]), tabela["faixas"]["tamanho"]).iloc[0])
+    mult, avisos = multiplicador_manual(v, tabela)
+    avisos = [a.replace("seções sem experiência", "seção sem experiência").replace("divisões sem experiência",
+              "divisão sem experiência") for a in avisos]
     v["q_ajustado"] = v["q"] * mult
     v["custo_esperado"] = v["capital"] * v["q_ajustado"]
     taxa_anual = 1000 * v["custo_esperado"].sum() / v["capital"].sum()
+    f_sec = tabela["secao"].get(str(cnae_secao), tabela["secao_nao_vista"])
+    f_div = tabela["divisao"].get(f"{cnae_secao}:{cnae_divisao}", tabela["divisao_nao_vista"])
     return {"taxa_pura_anual_mil": float(taxa_anual), "taxa_pura_mensal_mil": float(taxa_anual / 12),
             "premio_puro_anual": float(v["custo_esperado"].sum()), "capital_total": float(v["capital"].sum()),
             "vidas": int(len(v)), "obitos_esperados": float(v["q_ajustado"].sum()),

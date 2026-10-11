@@ -1,0 +1,35 @@
+# Etapa 3: renovação. Valores ilustrativos rotulados; ajuste com as regras da seguradora.
+
+anos_experiencia_max: 5          # janela de experiência por grupo (anos-apólice mais recentes)
+
+pooling:
+  # Nível de pooling do grupo = max(piso, múltiplo x capital médio das vidas ativas), limitado à
+  # retenção. Sinistros acima do nível saem da experiência do grupo; o excesso esperado vira encargo.
+  multiplo_capital_medio: 3.0
+  piso: 100000
+  limite_retencao: 2000000       # ILUSTRATIVO: usar o limite de retenção da seguradora
+
+credibilidade:
+  metodo: bs                     # "mercado" (flutuação limitada) ou "bs" (Bühlmann-Straub); escolha pelo backtest
+  flutuacao_limitada:
+    # Ordem de grandeza da prática de mercado em vida em grupo (levantamento SOA/Milliman, 2013):
+    # credibilidade a partir de ~300-500 vidas-ano e plena entre ~18 e 25 mil vidas-ano, regra da raiz.
+    base: vidas_ano
+    n_completo: 20000
+    n_minimo: 500
+  # Bühlmann-Straub: razão = A/E em valor limitado ao pooling; peso = número efetivo de óbitos (n_ef).
+
+reajuste:
+  carregamento_total: 0.35       # ILUSTRATIVO (despesas, corretagem, pró-labore, tributos, margem)
+  piso: -0.15
+  teto: 0.40
+
+regra_contratual:                # referência: apólice UFU/MetLife (faixas de sinistralidade)
+  ibnr_pct_premio: 0.15
+  faixas:
+    - {ate: 0.75, reajuste: 0.00}
+    - {ate: 0.85, reajuste: 0.10}
+    - {ate: .inf, reajuste: 0.15}
+
+backtest:
+  meses_maturacao_alvo: 12       # o ano-alvo precisa ter terminado há pelo menos isso (aviso completo)

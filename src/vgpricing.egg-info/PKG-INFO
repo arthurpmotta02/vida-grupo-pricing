@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: vgpricing
+Version: 0.1.0
+Summary: Precificação e renovação de Vida em Grupo: taxa manual, credibilidade e camada bayesiana
+Requires-Python: >=3.11
+Requires-Dist: pandas>=2.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: scipy>=1.11
+Requires-Dist: openpyxl>=3.1
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: pyarrow>=14
+Requires-Dist: matplotlib>=3.8
+Requires-Dist: statsmodels>=0.14
+Requires-Dist: chainladder>=0.8
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: nbformat; extra == "dev"
+Requires-Dist: nbconvert; extra == "dev"
+Requires-Dist: ipykernel; extra == "dev"

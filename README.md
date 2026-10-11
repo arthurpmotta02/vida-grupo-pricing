@@ -15,8 +15,8 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 |---|---|
 | A base de vidas e sinistros está confiável? O que precisa voltar para o cadastro? | Etapa 1 (pronta) |
 | Qual a taxa pura por mil para um grupo novo? | Etapa 2 (pronta) |
+| Quanto reajustar na renovação? | Etapa 3 (pronta) |
 | E a taxa comercial, com carregamentos? | Cotador (próximo) |
-| Quanto reajustar na renovação, e quanto confiar na experiência do grupo? | Etapa 3 |
 | Qual a chance de a sinistralidade passar da meta no próximo ano? | Etapa 4 |
 | O método novo teria acertado mais que a regra contratual no passado? | Etapa 5 (backtest) |
 
@@ -30,9 +30,11 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
   CNAE e estipulante como efeitos aleatórios (estrutura de Ohlsson para fatores com muitos níveis).
   Idade, sexo e porte só entram com evidência (razão de verossimilhança com correção de Holm).
   Tabela de fatores versionada em `artefatos/fatores_manual.yaml` e taxa pura para um censo de vidas.
-- [ ] Etapa 3: renovação. IBNR (chainladder), pooling formal com encargo, credibilidade de mercado
-  (flutuação limitada) contra Bühlmann-Straub (`actuar::cm`) e modelo misto, escolha por backtest,
-  comparação com a regra contratual por faixa de sinistralidade.
+- [x] **Etapa 3: renovação.** Pooling formal com encargo; A/E contra a taxa manual em valor limitado;
+  IBNR por chain ladder mensal (pacote chainladder) com alocação Bornhuetter-Ferguson; credibilidade de
+  mercado (raiz, vidas-ano) e Bühlmann-Straub com número efetivo de óbitos (conferido com `actuar::cm`);
+  reajuste técnico com piso e teto; comparação com a regra contratual; backtest fora do tempo com
+  deviance e intervalo por bootstrap pareado.
 - [ ] Etapa 4: diagnóstico com machine learning (LightGBM Poisson sobre o resíduo da taxa manual, SHAP).
   Só aponta interações candidatas; não entra na tarifa.
 - [ ] Etapa 5: camada bayesiana (mesmo modelo com prioris; propaga a incerteza da variância entre grupos).
@@ -45,7 +47,7 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 pip install -e ".[dev]"
 Rscript r/instalar_pacotes.R             # R >= 4.2 com glmmTMB, lme4, jsonlite, actuar
 pytest                                   # testes do GLMM e da tábua oficial são pulados se faltar R/arquivo
-jupyter lab                              # rode notebooks/01_dados e depois 02_taxa_manual
+jupyter lab                              # rode os notebooks na ordem: 01, 02, 03
 ```
 
 **Por que R.** glmmTMB e lme4 são as implementações de referência de modelos mistos, e a literatura
@@ -93,15 +95,17 @@ se os nomes de coluna forem outros.
 - **Quanto confiar na variância entre grupos?** Pouco, com o volume da carteira sintética (mediana de 3
   óbitos por grupo): o intervalo é largo e aparece no notebook. A camada bayesiana (Etapa 5) propaga
   essa incerteza para o preço.
-- **O pipeline corrige dados sozinho?** Não. Toda exclusão ou sinalização vai para o log de exceções,
-  com a regra e a linha de origem.
-
-## Estrutura
+- **Por que o A/E da renovação é medido contra a taxa manual?** Porque a credibilidade mistura a
+  experiência do grupo com a manual; medir contra a tábua misturaria o efeito da atividade com o do grupo.
+- **Qual fórmula de credibilidade?** A de mercado (flutuação limitada em vidas-ano) e a de Bühlmann-Straub
+  são calculadas lado a lado. A escolha é por backtest fora do tempo, com intervalo de confiança: com pouco
+  volume, um único ano não separa os métodos, e isso aparece no notebook.
+- **O pipeline corrige dados sozinho?**## Estrutura
 
 ```
 config/      parâmetros versionados (tábua, regras de validação, mapeamento, hipóteses do sintético)
-src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, glmm (ponte com o R), manual
-r/           scripts R (ajuste do GLMM, instalação de pacotes)
+src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, glmm, manual, ibnr, renovacao, backtest
+r/           scripts R (GLMM, Bühlmann-Straub do actuar, instalação de pacotes)
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador)
 notebooks/   narrativa de cada etapa (só chama funções testadas)
 tests/       pytest: casos calculados à mão + prova de detecção da sujeira injetada

@@ -1,0 +1,15 @@
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+openpyxl>=3.1
+pyyaml>=6.0
+pyarrow>=14
+matplotlib>=3.8
+statsmodels>=0.14
+chainladder>=0.8
+
+[dev]
+pytest>=8
+nbformat
+nbconvert
+ipykernel
