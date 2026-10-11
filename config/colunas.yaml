@@ -1,0 +1,36 @@
+# Mapeamento: nome canônico -> nome na fonte.
+# Para usar a base interna, troque apenas os valores da direita.
+estipulantes:
+  id_estipulante: id_estipulante
+  setor: setor
+  data_inicio_vigencia: data_inicio_vigencia
+  data_fim_vigencia: data_fim_vigencia
+  tipo_capital: tipo_capital
+  contributario: contributario
+  taxa_vigente_mensal_mil: taxa_vigente_mensal_mil
+vidas:
+  id_estipulante: id_estipulante
+  id_vida: id_vida
+  data_nascimento: data_nascimento
+  sexo: sexo
+  data_inicio: data_inicio
+  data_fim: data_fim
+  capital: capital
+  situacao: situacao
+sinistros:
+  id_sinistro: id_sinistro
+  id_estipulante: id_estipulante
+  id_vida: id_vida
+  cobertura: cobertura
+  data_ocorrencia: data_ocorrencia
+  data_aviso: data_aviso
+  data_pagamento: data_pagamento
+  valor_indenizado: valor_indenizado
+  valor_reserva: valor_reserva
+  status: status
+premios:
+  id_estipulante: id_estipulante
+  inicio_periodo: inicio_periodo
+  fim_periodo: fim_periodo
+  premio_emitido: premio_emitido
+  taxa_mensal_mil: taxa_mensal_mil

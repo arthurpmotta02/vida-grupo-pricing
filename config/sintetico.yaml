@@ -1,0 +1,61 @@
+# Carteira sintética. TODO parâmetro abaixo é HIPÓTESE do gerador, não dado de mercado
+# (a única exceção é a tábua, quando o arquivo oficial BR-EMS estiver presente).
+# Objetivo: testar o pipeline contra uma verdade conhecida.
+
+semente: 2026
+data_referencia: "2025-12-31"
+n_estipulantes: 250
+anos_historico: [3, 5]
+tamanho: {min: 30, max: 5000}          # log-uniforme
+sigma_efeito_grupo: 0.30                # heterogeneidade entre estipulantes (lognormal, média 1)
+rotatividade_anual: 0.15
+crescimento_anual_sd: 0.05
+proporcao_afastados: 0.005
+
+setores:                                # fator_mortalidade multiplica a tábua
+  servicos:    {peso: 0.30, fator_mortalidade: 1.00, idade_media: 37, prop_masc: 0.50}
+  comercio:    {peso: 0.15, fator_mortalidade: 1.05, idade_media: 33, prop_masc: 0.50}
+  industria:   {peso: 0.20, fator_mortalidade: 1.15, idade_media: 39, prop_masc: 0.70}
+  construcao:  {peso: 0.08, fator_mortalidade: 1.35, idade_media: 38, prop_masc: 0.90}
+  transporte:  {peso: 0.07, fator_mortalidade: 1.30, idade_media: 42, prop_masc: 0.85}
+  financeiro:  {peso: 0.10, fator_mortalidade: 0.85, idade_media: 36, prop_masc: 0.45}
+  adm_publica: {peso: 0.10, fator_mortalidade: 0.95, idade_media: 45, prop_masc: 0.45}
+
+idade: {sd: 10, min_entrada: 18, max_entrada: 70}
+
+capital:
+  tipos: {uniforme: 0.40, multiplo_salarial: 0.40, escalonado: 0.20}
+  uniforme_valores: [10000, 20000, 30000, 50000, 100000]
+  salario_mediana: 3500
+  salario_sigma: 0.70
+  multiplos: [12, 24, 36]
+  reajuste_salarial_anual: 0.05
+  teto: 2000000
+  escalonado_niveis: [30000, 60000, 150000, 400000]
+  escalonado_probs: [0.60, 0.25, 0.12, 0.03]
+
+sinistros:
+  atraso_aviso_mediana_dias: 45
+  atraso_aviso_sigma: 1.0
+  prob_negado: 0.03
+  prob_evento_catastrofico: 0.003       # por estipulante-ano
+  mortes_evento_catastrofico: [3, 8]
+
+premio:
+  carregamento_total: 0.35               # só para gerar o prêmio histórico
+  ibnr_regra_pct_premio: 0.15
+  faixas_reajuste:                       # regra contratual de referência (UFU/MetLife)
+    - {ate: 0.75, reajuste: 0.00}
+    - {ate: 0.85, reajuste: 0.10}
+    - {ate: .inf, reajuste: 0.15}
+
+sujeira:                                 # proporção de registros sujos injetados
+  vidas_duplicadas: 0.005
+  nascimento_ausente: 0.001
+  idade_impossivel: 0.002
+  sexo_ausente: 0.005
+  capital_zero: 0.001
+  fim_antes_inicio: 0.001
+  sinistro_duplicado: 0.02
+  sinistro_vida_inexistente: 0.01
+  aviso_antes_ocorrencia: 0.01

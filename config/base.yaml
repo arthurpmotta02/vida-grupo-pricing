@@ -1,0 +1,36 @@
+# Parâmetros gerais do pipeline. Toda escolha que muda número fica aqui, versionada.
+
+data_referencia: "2025-12-31"   # data de corte da base (último dia com informação)
+
+tabua:
+  # Fonte oficial: SUSEP, "Tabuas BR-EMS 2010 2015 2021 2026.xlsx"
+  # Baixar: vgpricing.tabua.baixar_tabua_susep()  (detalhes em data/external/README.md)
+  nome: "BR-EMSmt-2026"
+  arquivo: "data/external/tabuas_br_ems.xlsx"
+  url: "https://www.gov.br/susep/pt-br/arquivos/informacoes-tecnicas-e-planos-padroes/tabuas-biometricas-br-ems/tabuas-br-ems-2010-2015-2021-010721.xlsx/@@download/file"
+  baixar_automaticamente: true      # se o arquivo não existir, tenta baixar e confere o hash
+  # Hash do arquivo baixado da SUSEP em out/2026. Se a SUSEP republicar o arquivo,
+  # o cálculo bloqueia até alguém revalidar e atualizar este valor.
+  sha256: "45a1565083c77042187c1364a58d0f27d90208f140124394d179fb2b8cd70541"
+  abas: {M: "BR-EMSmt-2026-m", F: "BR-EMSmt-2026-f"}
+  # Usadas só para conferir que a tábua lida é de morte (mortalidade mt > sb).
+  abas_sobrevivencia: {M: "BR-EMSsb-2026-m", F: "BR-EMSsb-2026-f"}
+  coluna_idade: "Idade"
+  coluna_qx: "qx"
+  # Sem o arquivo oficial, roda com curva placeholder (NÃO é BR-EMS) e avisa.
+  permitir_placeholder: true
+
+exposicao:
+  dias_por_ano: 365.25
+  # Idade na tábua: idade completa (último aniversário) no início de cada
+  # pedaço de exposição dentro do ano-apólice.
+  convencao_idade: "ultimo_aniversario_inicio_periodo"
+
+validacao:
+  idade_minima_possivel: 14
+  idade_maxima_possivel: 100
+  idade_maxima_aceitacao: 80        # acima disso: sinaliza (regra de aceitação), não exclui
+  capital_maximo_sinalizacao: 5000000
+  tolerancia_conciliacao_premio: 0.02
+  situacoes_fora_da_precificacao: ["afastado", "aposentado_invalidez"]
+  status_sinistro_excluidos: ["negado"]
