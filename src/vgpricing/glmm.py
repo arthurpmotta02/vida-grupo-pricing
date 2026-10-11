@@ -1,8 +1,9 @@
-"""GLMM de frequência de óbitos via R (glmmTMB), chamado a partir do Python.
+"""Modelos de frequência de óbitos via R (glmmTMB), chamado a partir do Python.
 
-Por que R: glmmTMB e lme4 são as implementações de referência de modelos mistos (a monografia
-nº 14 da CAS usa R). O Python organiza os dados, chama `r/ajustar_glmm.R` com `Rscript` e lê
-o resultado. A troca é por CSV/JSON (sem dependência de rpy2 nem arrow no R).
+glmmTMB é o único pacote de modelagem do projeto: ajusta o GLMM da taxa manual e também os
+modelos de comparação (Poisson e Binomial Negativa sem efeitos aleatórios), com as
+log-verossimilhanças na mesma base. O Python organiza os dados, chama `r/ajustar_glmm.R` com
+`Rscript` e lê o resultado (troca por CSV/JSON).
 
 Modelo (escala log, offset = óbitos esperados pela tábua):
     log mu = log E + beta_0 + beta' x + u_secao:divisao + u_estipulante
@@ -33,7 +34,7 @@ SCRIPT = RAIZ / "r" / "ajustar_glmm.R"
 def r_disponivel() -> bool:
     if shutil.which("Rscript") is None:
         return False
-    teste = subprocess.run(["Rscript", "-e", "suppressMessages({library(glmmTMB);library(lme4);library(jsonlite)})"],
+    teste = subprocess.run(["Rscript", "-e", "suppressMessages({library(glmmTMB);library(actuar);library(jsonlite)})"],
                            capture_output=True, text=True)
     return teste.returncode == 0
 
@@ -52,7 +53,6 @@ class ResultadoGLMM:
     testes: pd.DataFrame
     especificacao: dict
     ic_variancias: pd.DataFrame | None = None
-    lme4: dict | None = None
     extra: dict = field(default_factory=dict)
 
     def coef(self, nome: str, padrao: float = 0.0) -> float:
@@ -63,11 +63,12 @@ class ResultadoGLMM:
 def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
                  categoricas: list[str], numericas: list[str], niveis_base: dict | None = None,
                  testar_fixos: list[str] | None = None, testar_aleatorios: list[str] | None = None,
-                 conferir_lme4: bool = False, timeout: int = 900) -> ResultadoGLMM:
-    """Ajusta o GLMM no R. `fixos` e `aleatorios` usam a sintaxe de fórmula do R, por exemplo
-    fixos=["log_capital_c", "faixa_idade"], aleatorios=["(1|cnae_secao)", "(1|id_estipulante)"]."""
+                 familia: str = "poisson", timeout: int = 900) -> ResultadoGLMM:
+    """Ajusta o modelo no R. `fixos` e `aleatorios` usam a sintaxe de fórmula do R, por exemplo
+    fixos=["log_capital_c", "cnae_secao"], aleatorios=["(1|id_estipulante)"] (lista vazia = GLM).
+    familia: "poisson" ou "nbinom2" (Binomial Negativa)."""
     if not r_disponivel():
-        raise RuntimeError("R com glmmTMB, lme4 e jsonlite não encontrado. Veja README (instalação do R).")
+        raise RuntimeError("R com glmmTMB, actuar e jsonlite não encontrado. Rode `Rscript r/instalar_pacotes.R`.")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         cols = sorted(set(["N", "E", *categoricas, *numericas]))
@@ -76,7 +77,7 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
                 "fixos": list(fixos), "aleatorios": list(aleatorios),
                 "categoricas": list(categoricas), "numericas": list(numericas),
                 "niveis_base": niveis_base or {}, "testar_fixos": list(testar_fixos or []),
-                "testar_aleatorios": list(testar_aleatorios or []), "conferir_lme4": conferir_lme4}
+                "testar_aleatorios": list(testar_aleatorios or []), "familia": familia}
         (tmp / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
         r = subprocess.run(["Rscript", str(SCRIPT), str(tmp / "spec.json")], capture_output=True, text=True,
                            timeout=timeout)
@@ -101,7 +102,7 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
     return ResultadoGLMM(formula=m["formula"], fixos=fixos_df, vcov=np.atleast_2d(np.array(m["vcov_fixos"], float)),
                          variancias=variancias, aleatorios=ale, loglik=float(m["loglik"]), aic=float(m["aic"]),
                          gl=int(m["gl"]), convergiu=bool(m["convergiu"]), testes=testes, especificacao=spec,
-                         lme4=out.get("lme4"), ic_variancias=ic_df)
+                         ic_variancias=ic_df)
 
 
 # --------------------------------------------------------------------------- previsão

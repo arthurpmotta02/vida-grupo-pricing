@@ -42,7 +42,7 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
     pn0, pv0, _ = padroes_e_apriori(s, P0, None, d0)
     xp0 = experiencia_renovacao(v, s, e, tabua, tabela_manual, d0, P0, pn0, pv0, (1.0, 1.0))
     xp0["AE_v"] = np.where(xp0["V_manual"] > 0, xp0["A_v"] / xp0["V_manual"], np.nan)
-    bs = buhlmann_straub(xp0, "id_estipulante", "AE_v", "n_ef")
+    bs = buhlmann_straub(xp0, "id_estipulante", "ano_apolice", "AE_v", "n_ef")
 
     historicos, pools = [], []
     for d, grupo in alvo.groupby("inicio_ano"):

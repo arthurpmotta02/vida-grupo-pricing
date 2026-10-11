@@ -13,37 +13,26 @@ def test_flutuacao_limitada_raiz_e_minimo():
     assert np.allclose(z, [0.0, 0.5, 1.0, 1.0])
 
 
+requer_r = pytest.mark.skipif(not __import__("vgpricing.glmm", fromlist=["r_disponivel"]).r_disponivel(),
+                              reason="R com actuar não disponível")
+
+
+@requer_r
 def test_buhlmann_straub_caso_calculado_a_mao():
     # 2 grupos, 2 períodos, pesos 1: médias 1 e 3; s2 = [(0-1)^2+(2-1)^2+(2-3)^2+(4-3)^2]/2 = 2
     # a = [sum w_i (x_i - x)^2 - (I-1) s2] / (w - sum w_i^2 / w) = (2*1 + 2*1 - 2) / (4 - 2) = 1 -> k = 2
-    d = pd.DataFrame({"g": ["A", "A", "B", "B"], "x": [0.0, 2.0, 2.0, 4.0], "w": [1.0] * 4})
-    r = R.buhlmann_straub(d, "g", "x", "w")
+    d = pd.DataFrame({"g": ["A", "A", "B", "B"], "p": [1, 2, 1, 2], "x": [0.0, 2.0, 2.0, 4.0], "w": [1.0] * 4})
+    r = R.buhlmann_straub(d, "g", "p", "x", "w")
     assert r["s2"] == pytest.approx(2.0) and r["a"] == pytest.approx(1.0) and r["k"] == pytest.approx(2.0)
     assert np.allclose(r["por_grupo"]["Z"], 0.5)
+    assert r["por_grupo"]["peso"].tolist() == [2.0, 2.0]
 
 
+@requer_r
 def test_buhlmann_straub_sem_heterogeneidade_da_z_zero():
-    d = pd.DataFrame({"g": ["A", "A", "B", "B"], "x": [0.0, 2.0, 0.0, 2.0], "w": [1.0] * 4})
-    r = R.buhlmann_straub(d, "g", "x", "w")
-    assert r["a"] <= 0 and np.allclose(r["por_grupo"]["Z"], 0.0)
-
-
-def test_buhlmann_straub_confere_com_actuar():
-    from vgpricing.glmm import r_disponivel
-    if not r_disponivel():
-        pytest.skip("R não disponível")
-    from vgpricing.r_credibilidade import buhlmann_straub_actuar
-    rng = np.random.default_rng(3)
-    linhas = []
-    for i in range(40):
-        th = rng.gamma(10, 0.1)
-        for j in range(rng.integers(2, 6)):
-            w = rng.uniform(1, 30)
-            linhas.append({"g": f"g{i:02d}", "p": j, "w": w, "x": rng.poisson(th * w) / w})
-    d = pd.DataFrame(linhas)
-    py, r = R.buhlmann_straub(d, "g", "x", "w"), buhlmann_straub_actuar(d, "g", "p", "x", "w")
-    assert py["s2"] == pytest.approx(r["s2"]) and py["a"] == pytest.approx(r["a"])
-    assert np.allclose(py["por_grupo"]["Z"].to_numpy(), r["Z"].to_numpy())
+    d = pd.DataFrame({"g": ["A", "A", "B", "B"], "p": [1, 2, 1, 2], "x": [0.0, 2.0, 0.0, 2.0], "w": [1.0] * 4})
+    r = R.buhlmann_straub(d, "g", "p", "x", "w")
+    assert r["a"] <= 0 and np.isinf(r["k"]) and np.allclose(r["por_grupo"]["Z"], 0.0)
 
 
 def test_niveis_pooling():

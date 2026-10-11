@@ -6,7 +6,7 @@ Fluxo para cada grupo, numa data de avaliação:
    é cobrado como encargo de pooling (prática formal de pooling em vida em grupo).
 2. Experiência por ano-apólice contra a TAXA MANUAL (não contra a tábua), em valor limitado a P:
    A/E = (sinistros limitados avisados + IBNR) / esperado limitado pela manual.
-3. Credibilidade Z: flutuação limitada (prática de mercado) ou Bühlmann-Straub.
+3. Credibilidade Z: flutuação limitada (prática de mercado) ou Bühlmann-Straub (actuar::cm, no R).
 4. Fator de experiência = Z x A/E + (1 - Z) x 1 (o complemento é a própria taxa manual).
 5. Taxa de renovação = [esperado limitado na manual sobre o censo atual x fator + encargo de
    pooling] / capital; comercial = pura / (1 - carregamento); reajuste = comercial / vigente - 1,
@@ -107,29 +107,37 @@ def credibilidade_flutuacao_limitada(n, n_completo: float, n_minimo: float = 0.0
     return np.where(n < n_minimo, 0.0, np.minimum(1.0, np.sqrt(np.clip(n, 0, None) / n_completo)))
 
 
-def buhlmann_straub(df: pd.DataFrame, grupo: str, x: str, w: str) -> dict:
-    """Estimadores não viesados de Bühlmann-Straub (Bühlmann & Gisler, 2005).
+def buhlmann_straub(df: pd.DataFrame, grupo: str, periodo: str, x: str, w: str) -> dict:
+    """Bühlmann-Straub pelo actuar::cm (R), com os estimadores de Bühlmann-Gisler.
 
     x: razão observada por grupo-período (aqui, A/E em valor limitado); w: peso (aqui, n_ef).
     Devolve s2 (variância dentro), a (variância entre grupos), k = s2/a e, por grupo, peso total,
-    média ponderada e Z = w / (w + k). Se a estimativa de a for <= 0, Z = 0 para todos."""
-    d = df[[grupo, x, w]].dropna()
-    d = d[d[w] > 0]
-    g = d.groupby(grupo)
-    wi = g[w].sum()
-    xi = g.apply(lambda t: np.average(t[x], weights=t[w]), include_groups=False)
-    ni = g.size()
-    wtot = wi.sum()
-    xbar = float(np.average(xi, weights=wi))
-    xi_r = d[grupo].map(xi).to_numpy()
-    gl_dentro = int((ni - 1).clip(lower=0).sum())
-    s2 = float(np.sum(d[w].to_numpy() * (d[x].to_numpy() - xi_r) ** 2) / gl_dentro) if gl_dentro > 0 else np.nan
-    I = len(wi)
-    a = float((np.sum(wi * (xi - xbar) ** 2) - (I - 1) * s2) / (wtot - np.sum(wi ** 2) / wtot))
-    k = s2 / a if a > 0 else np.inf
-    z = wi / (wi + k) if np.isfinite(k) else wi * 0.0
-    return {"s2": s2, "a": a, "k": k, "media_carteira": xbar, "grupos": I,
-            "por_grupo": pd.DataFrame({"peso": wi, "media": xi, "Z": z, "periodos": ni})}
+    média ponderada e Z = w / (w + k). Com a <= 0 (sem heterogeneidade detectável), Z = 0."""
+    import json
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    from .config import RAIZ
+    d = df[[grupo, periodo, x, w]].dropna()
+    d = d[d[w] > 0].rename(columns={grupo: "grupo", periodo: "periodo", x: "x", w: "w"})
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        d.to_csv(t / "e.csv", index=False)
+        r = subprocess.run(["Rscript", str(RAIZ / "r" / "buhlmann_straub.R"), str(t / "e.csv"), str(t / "s.json")],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"actuar::cm falhou:\n{r.stderr[-2000:]}")
+        o = json.loads((t / "s.json").read_text())
+    grupos = [str(g) for g in (o["grupos"] if isinstance(o["grupos"], list) else [o["grupos"]])]
+    lst = lambda v: v if isinstance(v, list) else [v]
+    por = pd.DataFrame({"Z": lst(o["Z"]), "media": lst(o["media_grupo"])}, index=pd.Index(grupos, name=grupo))
+    g = d.groupby("grupo")
+    por["peso"] = g["w"].sum().reindex(por.index).to_numpy()
+    por["periodos"] = g.size().reindex(por.index).to_numpy()
+    a, s2 = float(o["a"]), float(o["s2"])
+    return {"s2": s2, "a": a, "k": s2 / a if a > 0 else np.inf, "media_carteira": float(o["media_carteira"]),
+            "grupos": len(grupos), "por_grupo": por}
 
 
 def fatores_experiencia(xp: pd.DataFrame, cfg_cred: dict, k_bs: float | None = None,
@@ -213,7 +221,7 @@ def renovar_carteira(dados: dict, tabua: Tabua, tabela_manual: dict, cfg: dict, 
     ae = ae_apriori_carteira(xp, aval)
     xp = experiencia_renovacao(v, s, e, tabua, tabela_manual, aval, P, pn, pv, ae)
     xp["AE_v"] = np.where(xp["V_manual"] > 0, xp["A_v"] / xp["V_manual"], np.nan)
-    bs = buhlmann_straub(xp, "id_estipulante", "AE_v", "n_ef")
+    bs = buhlmann_straub(xp, "id_estipulante", "ano_apolice", "AE_v", "n_ef")
     fat = fatores_experiencia(xp, cfg["credibilidade"], bs["k"], cfg["anos_experiencia_max"])
     ativas = v[(v["data_inicio"] <= aval) & (v["data_fim"].isna() | (v["data_fim"] >= aval))]
     custo = custo_manual_censo(ativas, e, tabua, tabela_manual, P, aval + pd.Timedelta(days=1))

@@ -10,7 +10,6 @@ Requires-Dist: openpyxl>=3.1
 Requires-Dist: pyyaml>=6.0
 Requires-Dist: pyarrow>=14
 Requires-Dist: matplotlib>=3.8
-Requires-Dist: statsmodels>=0.14
 Requires-Dist: chainladder>=0.8
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"

@@ -324,7 +324,9 @@ def injetar_sujeira(dados: dict[str, pd.DataFrame], cfg: dict) -> tuple[dict[str
 
     out = dict(dados)
     out["vidas"], out["sinistros"] = v, s
-    return out, pd.DataFrame(verdade, columns=["tabela", "codigo", "chave"])
+    v = pd.DataFrame(verdade, columns=["tabela", "codigo", "chave"])
+    v["chave"] = v["chave"].astype(str)          # id_linha (vidas) e id_sinistro (sinistros) na mesma coluna
+    return out, v
 
 
 def tabelas_de_entrada(dados: dict) -> dict:

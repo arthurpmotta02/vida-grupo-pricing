@@ -1,6 +1,7 @@
 # Parâmetros gerais do pipeline. Toda escolha que muda número fica aqui, versionada.
 
 data_referencia: "2025-12-31"   # data de corte da base (último dia com informação)
+pasta_processados: "data/processed"   # saída da Etapa 1 (base limpa), lida pelas etapas seguintes
 
 tabua:
   # Fonte oficial: SUSEP, "Tabuas BR-EMS 2010 2015 2021 2026.xlsx"

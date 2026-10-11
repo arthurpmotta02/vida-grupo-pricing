@@ -1,11 +1,11 @@
-"""Testes do GLMM no R. Rodam só onde o R com glmmTMB/lme4 estiver instalado."""
+"""Testes do glmmTMB no R. Rodam só onde o R com os pacotes do projeto estiver instalado."""
 import numpy as np
 import pandas as pd
 import pytest
 
 from vgpricing import glmm as G
 
-pytestmark = pytest.mark.skipif(not G.r_disponivel(), reason="R com glmmTMB/lme4 não disponível")
+pytestmark = pytest.mark.skipif(not G.r_disponivel(), reason="R com glmmTMB não disponível")
 
 
 def _simular(n_grupos=500, sd_grupo=0.3, efeito=(1.0, 1.4, 0.8), beta_cap=-0.1, efeito_ruido=1.0, semente=7):
@@ -22,22 +22,34 @@ def _simular(n_grupos=500, sd_grupo=0.3, efeito=(1.0, 1.4, 0.8), beta_cap=-0.1, 
     return pd.DataFrame(linhas)
 
 
-def _ajustar(df, fixos, testar=(), lme4=False):
-    return G.ajustar_glmm(df, fixos, ["(1|id_estipulante)"], categoricas=["id_estipulante", "cnae_secao", "ruido"],
+def _ajustar(df, fixos, testar=(), aleatorios=("(1|id_estipulante)",), familia="poisson"):
+    return G.ajustar_glmm(df, fixos, list(aleatorios), categoricas=["id_estipulante", "cnae_secao", "ruido"],
                           numericas=["log_capital_c"], niveis_base={"cnae_secao": "A", "ruido": "x"},
-                          testar_fixos=list(testar), conferir_lme4=lme4)
+                          testar_fixos=list(testar), familia=familia)
 
 
-def test_recupera_parametros_e_confere_com_lme4():
+def test_recupera_parametros():
     df = _simular()
-    r = _ajustar(df, ["log_capital_c", "cnae_secao"], lme4=True)
+    r = _ajustar(df, ["log_capital_c", "cnae_secao"])
     assert r.convergiu
     b = r.fixos.set_index("nome")
     for nome, verdade in {"log_capital_c": -0.1, "cnae_secaoB": np.log(1.4), "cnae_secaoC": np.log(0.8)}.items():
         assert abs(b.loc[nome, "estimativa"] - verdade) < 3 * b.loc[nome, "ep"], nome
     assert 0.03 < r.variancias["id_estipulante"] < 0.2                      # verdade 0,09
-    lme = dict(zip(r.lme4["fixos"]["nome"], r.lme4["fixos"]["estimativa"]))
-    assert all(abs(lme[n] - b.loc[n, "estimativa"]) < 1e-3 for n in b.index)
+    ic = r.ic_variancias.set_index("termo").loc["id_estipulante"]
+    assert ic["var_inf"] < r.variancias["id_estipulante"] < ic["var_sup"]
+
+
+def test_modelos_de_comparacao_no_mesmo_pacote():
+    """Sem efeitos aleatórios: GLM Poisson e Binomial Negativa. Com heterogeneidade entre grupos,
+    o GLMM tem log-verossimilhança maior que os dois."""
+    df = _simular()
+    glmm = _ajustar(df, ["log_capital_c", "cnae_secao"])
+    p = _ajustar(df, ["log_capital_c", "cnae_secao"], aleatorios=())
+    nb = _ajustar(df, ["log_capital_c", "cnae_secao"], aleatorios=(), familia="nbinom2")
+    assert p.variancias == {} and nb.variancias == {}
+    assert nb.loglik >= p.loglik - 1e-6
+    assert glmm.loglik > nb.loglik
 
 
 def test_razao_de_verossimilhanca_detecta_efeito_real_e_nao_o_nulo():

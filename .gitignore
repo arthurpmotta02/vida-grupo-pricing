@@ -1,5 +1,6 @@
 # Dados reais NUNCA entram no repositório (LGPD / política interna)
 data/raw/
+data/processed/
 data/external/*.xlsx
 !data/external/README.md
 data/synthetic/*

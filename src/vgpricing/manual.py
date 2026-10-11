@@ -1,6 +1,7 @@
 """Etapa 2: taxa manual.
 
-Modelo de frequência de óbitos relativo à tábua, estimado como GLMM no R (glmmTMB):
+Modelo de frequência de óbitos relativo à tábua, estimado como GLMM no R (glmmTMB, único pacote de
+modelagem do projeto):
 
     N ~ Poisson(mu),  log mu = log E + beta_0 + beta_cap * log(capital / capital_ref)
                                [+ fatores candidatos] + u_secao + u_secao:divisao + u_estipulante
@@ -94,13 +95,14 @@ def niveis_base(cel: pd.DataFrame, colunas: list[str]) -> dict[str, str]:
     return {c: str(cel.groupby(c)["E"].sum().idxmax()) for c in colunas}
 
 
-def _ajustar(cel, cfg_manual, fixos, testar_fixos=(), testar_aleatorios=(), conferir_lme4=False) -> ResultadoGLMM:
+def _ajustar(cel, cfg_manual, fixos, testar_fixos=(), testar_aleatorios=(), aleatorios=None,
+             familia="poisson") -> ResultadoGLMM:
     m = cfg_manual["modelo"]
     cats = ["cnae_secao"] + list(m["fixos_candidatos"])
-    return ajustar_glmm(cel, fixos=fixos, aleatorios=m["aleatorios"],
+    return ajustar_glmm(cel, fixos=fixos, aleatorios=m["aleatorios"] if aleatorios is None else aleatorios,
                         categoricas=CATEGORICAS_BASE + list(m["fixos_candidatos"]), numericas=["log_capital_c"],
                         niveis_base=niveis_base(cel, cats), testar_fixos=list(testar_fixos),
-                        testar_aleatorios=list(testar_aleatorios), conferir_lme4=conferir_lme4)
+                        testar_aleatorios=list(testar_aleatorios), familia=familia)
 
 
 def holm(p: pd.Series) -> pd.Series:
@@ -112,8 +114,7 @@ def holm(p: pd.Series) -> pd.Series:
     return aj.reindex(p.index)
 
 
-def ajustar_taxa_manual(cel: pd.DataFrame, cfg_manual: dict, conferir_lme4: bool = True
-                        ) -> tuple[ResultadoGLMM, ResultadoGLMM, pd.DataFrame]:
+def ajustar_taxa_manual(cel: pd.DataFrame, cfg_manual: dict) -> tuple[ResultadoGLMM, ResultadoGLMM, pd.DataFrame]:
     """1) Ajusta o modelo completo (obrigatórios + candidatos) e testa cada candidato e cada efeito
     aleatório por razão de verossimilhança. 2) Reajusta só com os candidatos com p <= alfa.
     Devolve (modelo_final, modelo_completo, testes)."""
@@ -126,47 +127,29 @@ def ajustar_taxa_manual(cel: pd.DataFrame, cfg_manual: dict, conferir_lme4: bool
     t.loc[fixo, "p_holm"] = holm(t.loc[fixo, "p_valor"])
     t["decisao"] = np.where(~fixo, "estrutura (mantido)", np.where(t["p_holm"] <= m["alfa"], "entra", "não entra"))
     entram = t.loc[(t["tipo"] == "fixo") & (t["decisao"] == "entra"), "termo"].tolist()
-    final = _ajustar(cel, cfg_manual, m["fixos_obrigatorios"] + entram, conferir_lme4=conferir_lme4)
+    final = _ajustar(cel, cfg_manual, m["fixos_obrigatorios"] + entram)
     return final, completo, t
 
 
 # --------------------------------------------------------------------------- comparações
 
-def glm_poisson(cel: pd.DataFrame, formula: str = "N ~ C(cnae_secao) + log_capital_c"):
-    """GLM Poisson sem efeitos aleatórios (statsmodels), para comparação."""
-    import statsmodels.api as sm
-    import statsmodels.formula.api as smf
-    return smf.glm(formula, data=cel, family=sm.families.Poisson(), offset=np.log(cel["E"])).fit()
+def ajustar_comparacao(cel: pd.DataFrame, cfg_manual: dict, fixos: list[str], familia: str) -> ResultadoGLMM:
+    """Modelo de comparação sem efeitos aleatórios (GLM Poisson ou Binomial Negativa), no mesmo glmmTMB."""
+    return _ajustar(cel, cfg_manual, fixos, aleatorios=[], familia=familia)
 
 
-def glm_nb2(cel: pd.DataFrame, formula: str = "N ~ C(cnae_secao) + log_capital_c"):
-    """Binomial Negativa NB2 (dispersão por célula), para comparação."""
-    import statsmodels.formula.api as smf
-    inicio = glm_poisson(cel, formula).params.to_numpy()
-    mod = smf.negativebinomial(formula, data=cel, offset=np.log(cel["E"]), loglike_method="nb2")
-    # parte da solução Poisson: sem isso, quando a dispersão por célula é quase nula, o otimizador
-    # diverge (alpha -> 0) e a log-verossimilhança sai NaN
-    import warnings
-    for metodo in ("newton", "bfgs"):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            r = mod.fit(start_params=np.append(inicio, 0.05), method=metodo, disp=0, maxiter=3000)
-        if np.isfinite(r.llf):
-            return r
-    raise RuntimeError("Binomial Negativa não convergiu")
-
-
-def comparar_dispersao(cel: pd.DataFrame, res_glmm: ResultadoGLMM,
-                       formula: str = "N ~ C(cnae_secao) + log_capital_c") -> pd.DataFrame:
-    """Onde está a sobredispersão? Poisson, NB2 (célula) e GLMM (grupo e atividade), com
-    log-verossimilhanças na mesma base (statsmodels e glmmTMB incluem -log N!)."""
-    p, nb = glm_poisson(cel, formula), glm_nb2(cel, formula)
+def comparar_dispersao(cel: pd.DataFrame, cfg_manual: dict, res_glmm: ResultadoGLMM) -> pd.DataFrame:
+    """Onde está a sobredispersão? Mesmos efeitos fixos do modelo final em três versões, todas no
+    glmmTMB (log-verossimilhanças diretamente comparáveis)."""
+    fixos = res_glmm.especificacao["fixos"]
+    p = ajustar_comparacao(cel, cfg_manual, fixos, "poisson")
+    nb = ajustar_comparacao(cel, cfg_manual, fixos, "nbinom2")
     linhas = [
-        {"modelo": "GLM Poisson", "dispersão": "nenhuma", "loglik": p.llf, "parametros": int(p.df_model + 1)},
-        {"modelo": "Binomial Negativa (NB2)", "dispersão": "por célula, independente", "loglik": nb.llf,
-         "parametros": int(len(nb.params))},
-        {"modelo": "GLMM (glmmTMB)", "dispersão": "por grupo e por atividade", "loglik": res_glmm.loglik,
-         "parametros": res_glmm.gl},
+        {"modelo": "GLM Poisson", "dispersão": "nenhuma", "loglik": p.loglik, "parametros": p.gl},
+        {"modelo": "Binomial Negativa (NB2)", "dispersão": "por célula, independente", "loglik": nb.loglik,
+         "parametros": nb.gl},
+        {"modelo": "GLMM (efeitos de divisão e estipulante)", "dispersão": "por grupo e por atividade",
+         "loglik": res_glmm.loglik, "parametros": res_glmm.gl},
     ]
     out = pd.DataFrame(linhas)
     out["AIC"] = -2 * out["loglik"] + 2 * out["parametros"]

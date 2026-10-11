@@ -25,14 +25,14 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 - [x] **Etapa 1: dados.** Leitura (Excel, CSV ou parquet) com mapeamento de colunas; 27 regras de
   qualidade com log auditável; exposição em vidas-ano e capital-ano; óbitos e valores esperados; número
   efetivo de óbitos ponderado por capital; conciliação de prêmio; gerador sintético.
-- [x] **Etapa 2: taxa manual.** GLMM de Poisson estimado no R com **glmmTMB** (conferido com lme4):
+- [x] **Etapa 2: taxa manual.** GLMM de Poisson estimado no R com **glmmTMB**:
   offset dos óbitos esperados pela BR-EMSmt 2026, log do capital, seção CNAE como efeito fixo, divisão
   CNAE e estipulante como efeitos aleatórios (estrutura de Ohlsson para fatores com muitos níveis).
   Idade, sexo e porte só entram com evidência (razão de verossimilhança com correção de Holm).
   Tabela de fatores versionada em `artefatos/fatores_manual.yaml` e taxa pura para um censo de vidas.
 - [x] **Etapa 3: renovação.** Pooling formal com encargo; A/E contra a taxa manual em valor limitado;
   IBNR por chain ladder mensal (pacote chainladder) com alocação Bornhuetter-Ferguson; credibilidade de
-  mercado (raiz, vidas-ano) e Bühlmann-Straub com número efetivo de óbitos (conferido com `actuar::cm`);
+  mercado (raiz, vidas-ano) e Bühlmann-Straub com número efetivo de óbitos (`actuar::cm`);
   reajuste técnico com piso e teto; comparação com a regra contratual; backtest fora do tempo com
   deviance e intervalo por bootstrap pareado.
 - [ ] Etapa 4: diagnóstico com machine learning (LightGBM Poisson sobre o resíduo da taxa manual, SHAP).
@@ -45,15 +45,16 @@ experiência do próprio grupo com credibilidade, e uma camada bayesiana usada s
 
 ```bash
 pip install -e ".[dev]"
-Rscript r/instalar_pacotes.R             # R >= 4.2 com glmmTMB, lme4, jsonlite, actuar
+Rscript r/instalar_pacotes.R             # R >= 4.2 com glmmTMB, actuar e jsonlite
 pytest                                   # testes do GLMM e da tábua oficial são pulados se faltar R/arquivo
-jupyter lab                              # rode os notebooks na ordem: 01, 02, 03
+jupyter lab                              # notebooks na ordem 01, 02, 03; o 90 valida o código no sintético
 ```
 
-**Por que R.** glmmTMB e lme4 são as implementações de referência de modelos mistos, e a literatura
-atuarial de credibilidade com modelos mistos usa R. O Python organiza os dados e chama o R por
+**Por que R.** Um pacote por tarefa: glmmTMB para os modelos de frequência (o GLMM da taxa manual e os
+modelos de comparação, Poisson e Binomial Negativa) e actuar para a credibilidade de Bühlmann-Straub. São
+pacotes de referência em R, sem equivalente maduro em Python. O Python organiza os dados e chama o R por
 `Rscript` (arquivos CSV/JSON, sem rpy2). O cotador só lê a tabela de fatores: **cotar não exige R**,
-estimar exige. Em Ubuntu, os pacotes existem no apt (`r-cran-glmmtmb`, `r-cran-lme4`, `r-cran-actuar`).
+estimar exige. Em Ubuntu, os pacotes existem no apt (`r-cran-glmmtmb`, `r-cran-actuar`, `r-cran-jsonlite`).
 
 **Tábua.** O pipeline usa a BR-EMSmt 2026 oficial, lida direto do arquivo publicado pela SUSEP e
 travada por hash. Na primeira execução, se o arquivo não estiver em `data/external/`, o código baixa
@@ -107,10 +108,10 @@ config/      parâmetros versionados (tábua, regras de validação, mapeamento,
 src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, glmm, manual, ibnr, renovacao, backtest
 r/           scripts R (GLMM, Bühlmann-Straub do actuar, instalação de pacotes)
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador)
-notebooks/   narrativa de cada etapa (só chama funções testadas)
+notebooks/   01 dados, 02 taxa manual, 03 renovação (rodam iguais com dados reais); 90 validação contra a verdade do gerador
 tests/       pytest: casos calculados à mão + prova de detecção da sujeira injetada
 templates/   Excel de entrada
-data/        external/ (tábua oficial, fora do git), raw/ (dados reais, fora do git), synthetic/
+data/        external/ (tábua oficial), raw/ (dados reais), processed/ (base limpa), synthetic/ (entrada e verdade do gerador); tudo fora do git
 ```
 
 ## Governança e LGPD
