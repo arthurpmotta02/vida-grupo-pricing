@@ -1,5 +1,4 @@
 """Casos 'golden': resultados conferidos à mão."""
-import numpy as np
 import pandas as pd
 import pytest
 

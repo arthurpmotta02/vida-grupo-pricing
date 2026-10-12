@@ -13,11 +13,22 @@ elastic_net:
   interacoes_do_lightgbm: 3   # (nUseTopLightGBMInteractions)
   padronizar: true            # padrão do glmnet, como na SOA
 
-lightgbm:                     # (nGBMSeed e parâmetros do modelo) para bases grandes como a da SOA
-  learning_rate: 0.1
-  num_leaves: 15
-  min_data_in_leaf: 200
+# LightGBM (SOA 4.2). Dois blocos: a base da SOA é grande; a carteira tem poucos milhares de óbitos e pede
+# regularização forte (árvores rasas, folhas grandes, aprendizado lento), já que mortalidade é evento raro.
+lightgbm_soa:                 # (nGBMSeed e parâmetros do modelo)
+  parametros: {objective: poisson, learning_rate: 0.1, num_leaves: 15, min_data_in_leaf: 200, verbose: -1, seed: 2026}
   rodadas_max: 1000
   parada_antecipada: 50
   folds: 5
+  semente: 2026
   bootstrap: 200
+
+lightgbm_carteira:
+  parametros: {objective: poisson, learning_rate: 0.02, num_leaves: 4, min_data_in_leaf: 400,
+               min_sum_hessian_in_leaf: 5.0, feature_fraction: 0.8, bagging_fraction: 0.8, bagging_freq: 1,
+               lambda_l2: 10.0, cat_smooth: 20, min_data_per_group: 200, verbose: -1, seed: 2026}
+  rodadas_max: 3000
+  parada_antecipada: 150
+  folds: 5                    # partição por estipulante
+  semente: 2026
+  bootstrap: 2000

@@ -60,10 +60,11 @@ def grafico_ae(ax, t: pd.DataFrame, rotulo: str, titulo: str = "", col_valor: bo
     if col_valor and "ae_valor" in t:
         ax.plot(x, t["ae_valor"], "s", color="#c00000", ms=4, label="A/E por valor")
     ax.axhline(1, color="grey", lw=0.7, ls="--")
-    ax.set_xticks(x, [str(v) for v in t[rotulo]], rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel("A/E")
+    ax.set_xticks(x, [str(v) for v in t[rotulo]], rotation=45, ha="right")
+    ax.set_xlabel(rotulo.replace("_", " "))
+    ax.set_ylabel("A/E (observados ÷ esperados)")
     ax.set_title(titulo)
-    ax.legend(fontsize=7, loc="upper right")
+    ax.legend(loc="upper right")
     return ax
 
 

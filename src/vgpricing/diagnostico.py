@@ -1,7 +1,8 @@
-"""Etapa 4: diagnóstico de estrutura faltante com LightGBM.
+"""LightGBM como referência de desempenho e diagnóstico de estrutura faltante (framework da SOA, seção 4.2).
 
 Ajusta um gradient boosting com perda Poisson cujo ponto de partida (offset, `init_score`) é o log
-dos óbitos esperados pela taxa manual. O modelo, portanto, só aprende o que a manual não explica.
+dos óbitos esperados (pela tábua ou pela taxa manual). A SOA usa resposta = observado / esperado com peso =
+esperado; as duas formas têm a mesma verossimilhança. Usado nos notebooks 03a e 03b.
 - Se a deviance fora da amostra (grupos inteiros deixados de fora) não melhora com significância,
   a conclusão é que não falta estrutura relevante.
 - Se melhora, as contribuições SHAP (calculadas pelo próprio LightGBM, TreeSHAP) mostram onde; o que
@@ -12,50 +13,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .exposicao import exposicao_detalhada
-from .manual import multiplicador_manual
-from .tabua import Tabua
 
 
-def base_diagnostico(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
-                     tabela_manual: dict, data_referencia, meses_maturacao: int = 12,
-                     dias_por_ano: float = 365.25) -> pd.DataFrame:
-    """Linhas = estipulante x ano-apólice x idade (5 anos) x sexo x log(capital) arredondado, com o
-    esperado pela taxa manual (mu_manual) e os óbitos observados (N). Só experiência maturada."""
-    corte = pd.Timestamp(data_referencia) - pd.DateOffset(months=meses_maturacao)
-    det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano)
-    atrib = ["id_estipulante", "cnae_secao", "cnae_divisao"] + [c for c in ("tipo_capital", "contributario")
-                                                                if c in estipulantes.columns]
-    det = det.merge(estipulantes[atrib], on="id_estipulante", how="left")
-    det["sexo"] = det["sexo"].astype("string").fillna("ND")
-    mult, _ = multiplicador_manual(det, tabela_manual)
-    det["mu_manual"] = det["obitos_esperados"] * mult
-    det["E_tabua"] = det["obitos_esperados"]
-    porte = (det.groupby("id_estipulante")["exposicao"].sum()
-             / det.groupby("id_estipulante")["ano_apolice"].nunique()).rename("vidas_medias")
-    det = det.merge(porte, on="id_estipulante")
-    det["idade_q"] = (det["idade"] // 5) * 5
-    det["logc_r"] = np.round(np.log(det["capital"]), 1)
-    det["w_idade"] = det["mu_manual"] * det["idade"]
-    det["w_logc"] = det["mu_manual"] * np.log(det["capital"])
-
-    s = sinistros[sinistros["data_ocorrencia"] <= corte]
-    m = s[["id_sinistro", "id_estipulante", "id_vida", "data_ocorrencia"]].merge(
-        det[["id_estipulante", "id_vida", "ini", "fim", "ano_apolice", "idade_q", "sexo", "logc_r"]],
-        on=["id_estipulante", "id_vida"])
-    m = m[(m["data_ocorrencia"] >= m["ini"]) & (m["data_ocorrencia"] <= m["fim"])].drop_duplicates("id_sinistro")
-
-    chave = ["id_estipulante", "ano_apolice", "idade_q", "sexo", "logc_r"]
-    b = det.groupby(chave, as_index=False).agg(
-        mu_manual=("mu_manual", "sum"), E=("E_tabua", "sum"), w_idade=("w_idade", "sum"), w_logc=("w_logc", "sum"),
-        inicio_ano=("inicio_ano", "first"), vidas_medias=("vidas_medias", "first"),
-        **{c: (c, "first") for c in atrib if c != "id_estipulante"})
-    b = b.merge(m.groupby(chave).size().rename("N").reset_index(), on=chave, how="left").fillna({"N": 0})
-    b["idade"] = b.pop("w_idade") / b["mu_manual"]
-    b["log_capital"] = b.pop("w_logc") / b["mu_manual"]
-    b["log_porte"] = np.log(b["vidas_medias"])
-    b["ano_calendario"] = b["inicio_ano"].dt.year
-    return b[(b["mu_manual"] > 0) & (b["sexo"] != "ND")].reset_index(drop=True)
+def config_lightgbm(cfg_modelagem: dict, bloco: str, variaveis: list[str], categoricas: list[str]) -> dict:
+    """Monta a configuração de `ajustar_residual` a partir de `config/modelagem.yaml`
+    (bloco "lightgbm_soa" ou "lightgbm_carteira")."""
+    b = cfg_modelagem[bloco]
+    return {"variaveis": list(variaveis), "categoricas": list(categoricas), "lightgbm": dict(b["parametros"]),
+            "rodadas_max": b["rodadas_max"], "parada_antecipada": b["parada_antecipada"], "folds": b["folds"],
+            "semente": b["semente"], "bootstrap": b["bootstrap"]}
 
 
 def _matriz(df: pd.DataFrame, variaveis: list[str], categoricas: list[str],
@@ -71,9 +37,8 @@ def _matriz(df: pd.DataFrame, variaveis: list[str], categoricas: list[str],
 
 
 def _folds(grupos: pd.Series, k: int, semente: int) -> list[tuple[np.ndarray, np.ndarray]]:
-    u = grupos.unique()
-    rng = np.random.default_rng(semente)
-    f = grupos.map(dict(zip(rng.permutation(u), np.arange(len(u)) % k))).to_numpy()
+    from .avaliacao import folds_por_grupo
+    f = folds_por_grupo(grupos, k, semente)
     return [(np.flatnonzero(f != i), np.flatnonzero(f == i)) for i in range(k)]
 
 
@@ -135,13 +100,14 @@ def testar_candidato_glmm(df: pd.DataFrame, cfg_manual: dict, fixos_base: list[s
                           categoricas_extras: list[str] = (), numericas_extras: list[str] = ()) -> pd.DataFrame:
     """Fecha o ciclo: testa no GLMM da taxa manual (glmmTMB) um termo sugerido pelo diagnóstico.
 
-    Roda direto nas linhas da base de diagnóstico (a Poisson é invariante à agregação), com a mesma
+    Roda direto nas células da taxa manual (a Poisson é invariante à agregação), com a mesma
     estrutura de efeitos aleatórios da manual. `termos` usa sintaxe de fórmula do R; o teste é a razão
     de verossimilhança de retirar o último termo da lista."""
     from .glmm import ajustar_glmm
     from .manual import CATEGORICAS_BASE
     d = df.copy()
-    d["log_capital_c"] = d["log_capital"] - np.log(cfg_manual["capital_referencia"])
+    if "log_capital_c" not in d:
+        d["log_capital_c"] = d["log_capital"] - np.log(cfg_manual["capital_referencia"])
     d["cnae_divisao"] = d["cnae_divisao"].astype("string").fillna("ND")
     base_sec = d.groupby("cnae_secao")["E"].sum().idxmax()
     r = ajustar_glmm(d, fixos=list(fixos_base) + list(termos), aleatorios=cfg_manual["modelo"]["aleatorios"],
@@ -174,10 +140,11 @@ def tabela_interacoes(modelo, apenas_fortes: bool = False) -> pd.DataFrame:
 
 
 def grafico_shap(ax, contrib: pd.DataFrame, df: pd.DataFrame, var: str, obs: str = "N", base: str = "mu_manual",
-                 titulo: str | None = None):
+                 titulo: str | None = None, ordem: list[str] | None = None):
     """Boxplot dos valores SHAP de uma variável por nível (SOA, seção 4.2.4): losango vermelho = SHAP médio;
     quadrado azul = log(observado / base) do nível, centrado na média geral."""
-    niveis = sorted(df[var].astype(str).unique())
+    presentes = set(df[var].astype(str).unique())
+    niveis = [n for n in ordem if n in presentes] if ordem else sorted(presentes)
     x = df[var].astype(str).to_numpy()
     dados = [contrib[var].to_numpy()[x == n] for n in niveis]
     ax.boxplot(dados, showfliers=False, widths=0.6)
@@ -187,5 +154,6 @@ def grafico_shap(ax, contrib: pd.DataFrame, df: pd.DataFrame, var: str, obs: str
     geral = np.log(df[obs].sum() / df[base].sum())
     ax.plot(pos, np.log(g[obs] / g[base]) - geral, "s", color="#1f4e79", ms=5, label="log(observado / base)")
     ax.axhline(0, color="grey", lw=0.6, ls=":")
-    ax.set_xticks(pos, niveis, rotation=45, ha="right", fontsize=7)
-    ax.set_title(titulo or var); ax.legend(fontsize=7)
+    ax.set_xticks(pos, niveis, rotation=45, ha="right")
+    ax.set_xlabel(var); ax.set_ylabel("contribuição SHAP (escala log)")
+    ax.set_title(titulo or f"SHAP por nível: {var}"); ax.legend()

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from .exposicao import exposicao_detalhada, idade_completa
-from .glmm import ResultadoGLMM, ajustar_glmm, prever
+from .glmm import ResultadoGLMM, ajustar_glmm
 from .tabua import Tabua
 
 CATEGORICAS_BASE = ["id_estipulante", "cnae_secao", "cnae_divisao"]
@@ -171,33 +171,6 @@ def comparar_dispersao(cel: pd.DataFrame, cfg_manual: dict, res_glmm: ResultadoG
     return out
 
 
-def _deviance_poisson(N, mu) -> float:
-    N, mu = np.asarray(N, float), np.asarray(mu, float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(N > 0, N * np.log(N / mu), 0.0)
-    return float(2 * np.sum(t - (N - mu)))
-
-
-def validacao_cruzada_grupos(cel: pd.DataFrame, previsores: dict, k: int = 5, semente: int = 2026) -> pd.DataFrame:
-    """Deixa grupos inteiros de fora (simula cotar um grupo novo) e mede a deviance de Poisson no
-    total de óbitos de cada grupo deixado de fora. `previsores`: {nome: f(treino, teste) -> mu}."""
-    grupos = cel["id_estipulante"].unique()
-    rng = np.random.default_rng(semente)
-    fold = cel["id_estipulante"].map(dict(zip(rng.permutation(grupos), np.arange(len(grupos)) % k))).to_numpy()
-    linhas = []
-    for nome, f in previsores.items():
-        dev, prev, obs = 0.0, 0.0, 0.0
-        for i in range(k):
-            tr, te = cel[fold != i], cel[fold == i]
-            g = te.assign(mu=f(tr, te)).groupby("id_estipulante")[["N", "mu"]].sum()
-            dev += _deviance_poisson(g["N"], g["mu"])
-            prev += g["mu"].sum(); obs += g["N"].sum()
-        linhas.append({"modelo": nome, "deviance_grupos_novos": dev, "previstos/observados": prev / obs})
-    out = pd.DataFrame(linhas)
-    out["dif_vs_melhor"] = out["deviance_grupos_novos"] - out["deviance_grupos_novos"].min()
-    return out
-
-
 # --------------------------------------------------------------------------- tabela de fatores
 
 def tabela_fatores(res: ResultadoGLMM, cfg_manual: dict, meta: dict) -> dict:
@@ -291,9 +264,8 @@ def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: di
         from .elasticnet import ajustar_elastic_net
         from .prioris import offset_priori
         d = cel.copy()
-        grupos = d["id_estipulante"].unique()
-        mapa = dict(zip(np.random.default_rng(semente).permutation(grupos), np.arange(len(grupos)) % 5))
-        d["fold"] = d["id_estipulante"].map(mapa) + 1
+        from .avaliacao import folds_por_grupo
+        d["fold"] = folds_por_grupo(d["id_estipulante"], cfg_manual["validacao_cruzada"]["folds"], semente) + 1
         d["off_priori"] = offset_priori(d, prioris)
         r = ajustar_elastic_net(d, {}, ["log_capital_c", "cnae_secao"], ["cnae_secao"], ["log_capital_c"], "off_priori",
                                 alpha=0.0, foldid="fold", semente=semente)

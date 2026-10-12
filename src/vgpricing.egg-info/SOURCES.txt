@@ -3,13 +3,13 @@ pyproject.toml
 src/vgpricing/__init__.py
 src/vgpricing/avaliacao.py
 src/vgpricing/backtest.py
-src/vgpricing/cache.py
 src/vgpricing/config.py
 src/vgpricing/diagnostico.py
 src/vgpricing/elasticnet.py
 src/vgpricing/estudo.py
 src/vgpricing/exposicao.py
 src/vgpricing/glmm.py
+src/vgpricing/graficos.py
 src/vgpricing/ibnr.py
 src/vgpricing/io.py
 src/vgpricing/manual.py
@@ -28,6 +28,7 @@ src/vgpricing.egg-info/dependency_links.txt
 src/vgpricing.egg-info/requires.txt
 src/vgpricing.egg-info/top_level.txt
 tests/test_avaliacao.py
+tests/test_config.py
 tests/test_diagnostico.py
 tests/test_elasticnet.py
 tests/test_exposicao.py

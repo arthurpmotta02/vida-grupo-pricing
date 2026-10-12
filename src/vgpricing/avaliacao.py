@@ -20,10 +20,16 @@ from .estudo import ic_poisson
 
 
 def deviance_poisson(N, mu) -> float:
-    N, mu = np.asarray(N, float), np.asarray(mu, float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(N > 0, N * np.log(N / mu), 0.0)
-    return float(2 * np.sum(t - (N - mu)))
+    return float(deviance_por_unidade(N, mu).sum())
+
+
+def folds_por_grupo(grupos, k: int, semente: int) -> np.ndarray:
+    """Partição 0..k-1 para validação cruzada em que todas as linhas de um grupo (ex.: estipulante) ficam no mesmo
+    fold: as células de um grupo não são independentes. Usada por todo o projeto (uma implementação só)."""
+    g = pd.Series(np.asarray(grupos))
+    u = g.unique()
+    mapa = dict(zip(np.random.default_rng(semente).permutation(u), np.arange(len(u)) % k))
+    return g.map(mapa).to_numpy()
 
 
 def deviance_por_unidade(N, mu, unidade=None) -> np.ndarray:
@@ -158,7 +164,7 @@ def grafico_quantis(ax, q: pd.DataFrame, titulo: str):
                 color="#c00000", capsize=2, ms=4, label="observado (IC 95%)")
     ax.axhline(1, color="grey", lw=0.6, ls=":")
     ax.set_xlabel("faixa (ordenada pela relatividade prevista)"); ax.set_ylabel("relativo à média")
-    ax.set_title(titulo); ax.set_xticks(x); ax.legend(fontsize=7)
+    ax.set_title(titulo); ax.set_xticks(x); ax.legend()
 
 
 def grafico_double_lift(ax, d: pd.DataFrame, nome_a: str, nome_b: str, titulo: str = ""):
@@ -168,7 +174,7 @@ def grafico_double_lift(ax, d: pd.DataFrame, nome_a: str, nome_b: str, titulo: s
     ax.errorbar(x, d["observado"], yerr=[d["observado"] - d["obs_inf"], d["obs_sup"] - d["observado"]], fmt="s--",
                 color="#c00000", capsize=2, ms=4, label="observado (IC 95%)")
     ax.set_xlabel(f"faixa da razão {nome_a} / {nome_b}"); ax.set_ylabel(f"relativo a {nome_b}")
-    ax.set_title(titulo or f"Double lift: {nome_a} × {nome_b}"); ax.set_xticks(x); ax.legend(fontsize=7)
+    ax.set_title(titulo or f"Double lift: {nome_a} × {nome_b}"); ax.set_xticks(x); ax.legend()
 
 
 def grafico_lorenz(ax, curvas: dict[str, tuple[pd.DataFrame, float]], titulo: str = "Curva de Lorenz ordenada"):
@@ -176,4 +182,4 @@ def grafico_lorenz(ax, curvas: dict[str, tuple[pd.DataFrame, float]], titulo: st
         ax.plot(c["esperados_acum"], c["obitos_acum"], label=f"{nome} (Gini {g:.3f})")
     ax.plot([0, 1], [0, 1], color="grey", ls=":", lw=0.8)
     ax.set_xlabel("parcela acumulada dos esperados (tábua)"); ax.set_ylabel("parcela acumulada dos óbitos")
-    ax.set_title(titulo); ax.legend(fontsize=7)
+    ax.set_title(titulo); ax.legend()

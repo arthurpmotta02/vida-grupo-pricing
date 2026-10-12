@@ -16,11 +16,12 @@ dependencies = [
   "pyarrow>=14",
   "matplotlib>=3.8",
   "chainladder>=0.8",
+  "lightgbm>=4.0",
+  "joblib>=1.3",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "nbformat", "nbconvert", "ipykernel"]
-diagnostico = ["lightgbm>=4.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

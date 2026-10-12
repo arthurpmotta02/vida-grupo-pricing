@@ -29,16 +29,16 @@ meta:
   formula: N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)
   modelo: ridge (glmnet) com priori
   elasticidade_priori: -0.0986460171456716
-  desvio_elasticidade: 0.000637581663394545
+  desvio_elasticidade: 0.00063758166339456
 ae_base: 0.8606538883541587
 capital:
   referencia: 50000.0
-  elasticidade: -0.09800843548227706
+  elasticidade: -0.09800843548227704
 secao:
   C: 1.2562195288307294
   F: 1.4003696081874035
   G: 1.2194705314336265
-  H: 1.5319803779892374
+  H: 1.5319803779892376
   K: 1.0854771581810188
   M: 0.9545280492746685
   N: 1.2138052266284305

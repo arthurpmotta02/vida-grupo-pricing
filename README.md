@@ -21,10 +21,8 @@ flowchart LR
   SES --> E
   SOA --> MS[03a Modelo de mercado<br/>framework da SOA]
   MS -. forma dos efeitos: priori .-> M
-  E --> M[03b Taxa manual<br/>candidatos e teste fora do tempo]
-  M --> X[04 Diagnóstico de interações<br/>LightGBM, opcional]
-  X -. candidatos .-> M
-  M --> R[05 Renovação<br/>pooling, IBNR, credibilidade]
+  E --> M[03b Taxa manual<br/>candidatos, LightGBM de referência,<br/>teste fora do tempo]
+  M --> R[04 Renovação<br/>pooling, IBNR, credibilidade]
   M --> COT[Cotação de grupo novo]
   R --> DEC[Decisão comercial]
   COT --> DEC
@@ -59,9 +57,8 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 | `01_dados` | Leitura com mapeamento de colunas, 27 regras de qualidade com log, exposição por ano-apólice, número efetivo de óbitos, conciliação de prêmio | pandas | pronto |
 | `02_estudo_experiencia` | A/E por variável com IC exato, A/E cruzado, mercado brasileiro (SES), estudo da carteira | pandas, matplotlib | pronto |
 | `03a_modelo_mercado_soa` | Framework da SOA em dados reais de vida em grupo: GLM, LightGBM e elastic net com as interações do LightGBM, comparados no teste (deviance, MSE, MAE, Gini, A/M); forma dos efeitos exportada como priori | stats::glm, glmnet (R), lightgbm | pronto |
-| `03b_taxa_manual` | Mesmos passos na carteira, com teste fora do tempo (2024): plano atual, GLM, GLMM, ridge com priori SOA; LightGBM e elastic net como referência; escolha pela regra fixada antes; reajuste com toda a experiência | stats::glm, glmmTMB, glmnet (R), lightgbm | pronto |
-| `04_diagnostico_ml` | LightGBM Poisson sobre o resíduo da manual; interações candidatas voltam para teste no GLMM | lightgbm | pronto (opcional) |
-| `05_renovacao` | Pooling com encargo, IBNR, credibilidade de Bühlmann-Straub em valor limitado, reajuste com piso e teto, comparação com a regra contratual e com a credibilidade de mercado | chainladder, actuar (R) | pronto |
+| `03b_taxa_manual` | Mesmos passos na carteira, com teste fora do tempo (2024): plano atual, GLM, GLMM, ridge com priori SOA; LightGBM e elastic net como referência; SHAP e teste dirigido no GLMM da interação mais forte do LightGBM; escolha pela regra fixada antes; reajuste com toda a experiência | stats::glm, glmmTMB, glmnet (R), lightgbm | pronto |
+| `04_renovacao` | Pooling com encargo, IBNR, credibilidade de Bühlmann-Straub em valor limitado, reajuste com piso e teto, comparação com a regra contratual e com a credibilidade de mercado | chainladder, actuar (R) | pronto |
 | `90_validacao_sintetica` | Teste de software: o código recupera a verdade do gerador | — | pronto |
 | — | Validação: backtest com vários anos-alvo, credibilidade testada no SES, tratamento de pandemia e tendência | — | próximo |
 | — | Monitoramento, governança, cotador e relatório Quarto | — | próximo |
@@ -69,10 +66,10 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 ## Como rodar
 
 ```bash
-pip install -e ".[dev,diagnostico]"
+pip install -e ".[dev]"
 Rscript r/instalar_pacotes.R          # R >= 4.2 com glmmTMB, glmnet, actuar e jsonlite
 pytest                                # testes que dependem de R ou de arquivos externos são pulados se faltarem
-jupyter lab                           # notebooks na ordem 01, 02, 03a, 03b, 04, 05; o 90 é opcional
+jupyter lab                           # notebooks na ordem 01, 02, 03a, 03b, 04; o 90 é opcional
 ```
 
 **Dados públicos (SOA e SES).** Não são versionados. Baixe o zip das tabelas da SOA
@@ -157,7 +154,7 @@ padrão, sem efeito material dentro de uma faixa razoável.
 | Parâmetro | Valor | Tipo | Justificativa |
 |---|---|---|---|
 | Tábua base | BR-EMSmt 2026 | fonte | versão vigente publicada pela SUSEP (arquivo oficial, hash no config) |
-| Maturação da experiência na taxa manual | 12 meses | dados | 97,7% dos sinistros avisados em 12 meses no padrão de aviso da carteira (notebook 05); refazer na base real |
+| Maturação da experiência na taxa manual | 12 meses | dados | 97,7% dos sinistros avisados em 12 meses no padrão de aviso da carteira (notebook 04); refazer na base real |
 | Janela de experiência na renovação | até 5 anos | fonte | a SOA recomenda estudos a cada 3 a 5 anos: dados recentes e volume suficiente |
 | Capital de referência | R$ 50 mil | convenção | só normaliza o fator de capital (vale 1 nesse capital); não muda nenhum preço |
 | Mínimo de esperados para uma seção ter fator próprio | 30 óbitos | convenção | com 30 óbitos, o IC de 95% do A/E tem cerca de ±36%; abaixo disso a seção vai para "OUTRAS" |
@@ -191,10 +188,10 @@ padrão, sem efeito material dentro de uma faixa razoável.
 ```
 config/      parâmetros versionados (cada número de decisão está aqui)
 src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, publicos, estudo, glmm, elasticnet, prioris,
-             avaliacao, manual, diagnostico, ibnr, renovacao, backtest, verdade, cache
+             avaliacao, graficos, manual, diagnostico, ibnr, renovacao, backtest, verdade
 r/           GLM e GLMM (stats::glm e glmmTMB), elastic net (glmnet), Bühlmann-Straub (actuar), instalação
 scripts/     preparação dos dados públicos (roda na máquina do usuário)
-notebooks/   01, 02, 03a, 03b, 04 e 05 seguem o fluxo; 90 valida o código contra a verdade do gerador
+notebooks/   01, 02, 03a, 03b e 04 seguem o fluxo; 90 valida o código contra a verdade do gerador
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador) e forma da SOA usada como priori
 tests/       pytest: casos calculados à mão, reprodução das tabelas da SOA, detecção da sujeira injetada
 templates/   Excel de entrada

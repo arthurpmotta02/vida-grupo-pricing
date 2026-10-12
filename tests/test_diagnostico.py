@@ -26,7 +26,9 @@ def _base(efeito_regiao=1.0, n_grupos=300, semente=0):
 
 @pytest.fixture(scope="module")
 def cd():
-    return carregar_config("diagnostico")
+    return D.config_lightgbm(carregar_config("modelagem"), "lightgbm_carteira",
+                             ["idade", "sexo", "log_capital", "cnae_secao", "cnae_divisao", "tipo_capital", "contributario",
+                              "log_porte", "ano_calendario"], ["sexo", "cnae_secao", "cnae_divisao", "tipo_capital", "contributario"])
 
 
 def test_sem_estrutura_faltante_nao_ha_melhora(cd):
