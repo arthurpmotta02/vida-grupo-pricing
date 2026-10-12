@@ -25,4 +25,21 @@ modelo:
   # um fator próprio).
   min_esperados_secao: 30
 
-validacao_cruzada: {folds: 5, semente: 2026}
+validacao_cruzada: {folds: 5, semente: 2026}   # partição por estipulante (penalização da ridge)
+
+# Validação fora do tempo (CAS Monograph 5, seção 4.3): treino e teste separados no início; o teste só é usado
+# no fim, para escolher entre os candidatos. O modelo escolhido é reajustado com toda a experiência maturada.
+fora_do_tempo:
+  treino_ate: "2023-12-31"
+  teste: ["2024-01-01", "2024-12-31"]
+
+# Regra de decisão, fixada antes de olhar o teste: o candidato de menor deviance no teste; entre os empatados
+# com ele (IC de 95% da diferença de deviance, por bootstrap pareado por estipulante, contém zero), vale esta
+# ordem de preferência. A ridge com priori vem primeiro porque combina a experiência própria com a evidência
+# externa (estudo da SOA), com o peso dado por validação cruzada; o plano atual vem por último entre os
+# modelos que usam a experiência.
+decisao:
+  # Só estes podem virar tarifa (cabem na tabela de fatores e na nota técnica). Elastic net com interações e
+  # LightGBM entram na comparação como referência de desempenho, como no framework da SOA.
+  ordem_preferencia: ["ridge com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)"]
+  bootstrap: 2000

@@ -1,6 +1,6 @@
 """Verdade do gerador sintético. Serve só para TESTE DE SOFTWARE (o estimador recupera o que
 foi plantado?). Não é evidência sobre o mercado: na base real não existe 'verdade', e a validação
-de negócio é o backtest fora do tempo (notebook 03 e Etapa 6). Usado só no notebook 90."""
+de negócio é o backtest fora do tempo (notebook 05 e etapa de validação). Usado só no notebook 90."""
 from __future__ import annotations
 
 import pandas as pd

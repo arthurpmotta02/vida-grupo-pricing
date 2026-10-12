@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .avaliacao import deviance_por_unidade, diferenca_deviance
 from .exposicao import anos_apolice
 from .renovacao import (buhlmann_straub, experiencia_renovacao, fatores_experiencia, niveis_pooling,
                         padroes_e_apriori)
@@ -74,7 +75,7 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
         prev_lim = res["V_manual"] * res[f"fator_{m}"]
         prev_n = res["E_manual"] * res[f"fator_{m}"]
         premio = (prev_lim + res["V_excesso"]) / (1 - c)
-        devs[nome] = _deviance_por_grupo(res["N"], prev_n)
+        devs[nome] = deviance_por_unidade(res["N"], prev_n)
         linhas.append(_metricas(nome, res, prev_lim, prev_n, premio))
     if res["premio_emitido"].notna().all():
         linhas.append(_metricas("Regra contratual 75/85% (prêmio efetivamente cobrado)", res, None, None,
@@ -85,33 +86,21 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
             "pooling_alvo": P_alvo}
 
 
-def _deviance_por_grupo(N, mu) -> np.ndarray:
-    N, mu = np.asarray(N, float), np.asarray(mu, float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(N > 0, N * np.log(N / mu), 0.0)
-    return 2 * (t - (N - mu))
-
-
 def comparar_com_referencia(devs: dict, referencia: str, n_boot: int = 2000, semente: int = 2026) -> pd.DataFrame:
-    """Diferença de deviance (método - referência) com IC de 95% por bootstrap pareado por grupo.
-    Diferença negativa = método melhor que a referência."""
-    rng = np.random.default_rng(semente)
-    ref = devs[referencia]
-    n = len(ref)
-    idx = rng.integers(0, n, (n_boot, n))
+    """Diferença de deviance (método - referência) com IC de 95% por bootstrap pareado por grupo
+    (implementação única em `avaliacao.diferenca_deviance`). Diferença negativa = método melhor."""
     linhas = []
     for nome, d in devs.items():
-        dif = d - ref
-        boot = dif[idx].sum(axis=1)
-        linhas.append({"método": nome, "deviance": float(d.sum()), "diferença vs só manual": float(dif.sum()),
-                       "IC95 inf": float(np.percentile(boot, 2.5)), "IC95 sup": float(np.percentile(boot, 97.5))})
+        r = diferenca_deviance(d, devs[referencia], n_boot, semente)
+        linhas.append({"método": nome, "deviance": float(d.sum()), "diferença vs só manual": r["diferenca"],
+                       "IC95 inf": r["ic95_inf"], "IC95 sup": r["ic95_sup"]})
     return pd.DataFrame(linhas)
 
 
 def _metricas(nome, res, prev_lim, prev_n, premio) -> dict:
     out = {"método": nome}
     if prev_lim is not None:
-        out["deviance (contagem)"] = float(_deviance_por_grupo(res["N"], prev_n).sum())
+        out["deviance (contagem)"] = float(deviance_por_unidade(res["N"], prev_n).sum())
         out["erro relativo (valor limitado)"] = float(np.sqrt(((res["V"] - prev_lim) ** 2).sum()) / res["V"].sum())
         out["previsto/observado (valor limitado)"] = float(prev_lim.sum() / res["V"].sum())
     sp = res["V_total"] / premio

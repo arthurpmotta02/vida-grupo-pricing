@@ -49,14 +49,18 @@ def anos_apolice(estipulantes: pd.DataFrame, data_referencia) -> pd.DataFrame:
 
 
 def exposicao_detalhada(vidas: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
-                        data_referencia, dias_por_ano: float = 365.25) -> pd.DataFrame:
-    """Um registro por pedaço (segmento ∩ ano-apólice) com exposição e esperados."""
+                        data_referencia, dias_por_ano: float = 365.25, data_inicio=None) -> pd.DataFrame:
+    """Um registro por pedaço (segmento ∩ ano-apólice) com exposição e esperados. `data_inicio` (opcional)
+    corta a exposição anterior a essa data: com `data_referencia`, define uma janela de observação (usada para
+    separar treino e teste fora do tempo)."""
     data_ref = pd.Timestamp(data_referencia)
     py = anos_apolice(estipulantes, data_ref)
     v = vidas.copy()
     v["data_fim"] = v["data_fim"].fillna(data_ref).clip(upper=data_ref)
     m = v.merge(py, on="id_estipulante", how="inner")
     m["ini"] = m[["data_inicio", "inicio_ano"]].max(axis=1)
+    if data_inicio is not None:
+        m["ini"] = m["ini"].clip(lower=pd.Timestamp(data_inicio))
     m["fim"] = m[["data_fim", "fim_ano"]].min(axis=1)
     m = m[m["ini"] <= m["fim"]].copy()
     m["dias"] = (m["fim"] - m["ini"]).dt.days + 1

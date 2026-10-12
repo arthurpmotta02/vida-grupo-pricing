@@ -1,0 +1,35 @@
+# Estudo de mercado (SOA 2016, vida em grupo, EUA) como "priori" da taxa manual da carteira.
+# Só a FORMA relativa é transferida (elasticidade ao capital e fatores relativos entre seções CNAE);
+# o nível vem da carteira. Na carteira, a forma entra no offset e o desvio é estimado com penalização ridge
+# (priori normal centrada no estudo; lambda por validação cruzada = k da credibilidade).
+
+capital_referencia_usd: 50000      # só centraliza o log do capital; não muda a elasticidade
+
+# Mapeamento das atividades da SOA (classificação SIC agrupada) para seções da CNAE 2.0.
+# JULGAMENTO, pelo nome da atividade. Atividades mistas vão para a seção predominante.
+# "Z. Unknown" fica de fora (atividade desconhecida; ~30% dos óbitos da SOA).
+soa_para_cnae:
+  "A. Agriculture, Forestry, and Fishing": A
+  "B. Mining": B
+  "C. Construction": F
+  "D. Manufacturing - Food": C
+  "E. Manufacturing - Clothes, Textile": C
+  "F. Manufacturing - Wood Products": C
+  "G. Manufacturing - Paper, Drugs, Chemicals": C
+  "H. Manufacturing - heavy, steel etc.": C
+  "I. Manufacturing -Precision Equipment": C
+  "J. Transport, Communication, Utilities": H      # predominantemente transporte; comunicação (J) e utilidades (D/E) ficam juntas
+  "K. Wholesale Trade Durable Goods": G
+  "L. Wholesale Trade Non-Durable Goods": G
+  "M. Retail - Trade": G
+  "N. Banks & Securities": K
+  "O. Insurance, Other Finance": K
+  "P. Service - Personal": S
+  "Q. Computers": J
+  "R. Services - Other": N
+  "S. Health Services": Q
+  "T. Legal Services": M
+  "U. Educational Services": P
+  "V. Services - Public": O
+  "W. Services - Technical": M
+  "X. Public Administration": O

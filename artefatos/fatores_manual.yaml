@@ -1,17 +1,19 @@
 meta:
-  gerado_em: '2026-10-11'
+  gerado_em: '2026-10-12'
+  fonte_dados: carteira sintética
   tabua: BR-EMSmt-2026
   tabua_sha256: 45a1565083c77042187c1364a58d0f27d90208f140124394d179fb2b8cd70541
   corte_experiencia: '2024-12-31'
   obitos: 1686
   esperados_tabua: 1627.39
-  software: R glmmTMB
-  candidatos_testados:
-  - faixa_idade
-  - sexo
-  - faixa_tamanho
-  candidatos_que_entraram: []
+  teste_fora_do_tempo: 2024-01-01 a 2024-12-31
+  candidatos_empatados_no_teste:
+  - plano atual (tábua × A/E)
+  - GLM
+  - GLMM
+  - ridge com priori SOA
   secoes_agrupadas_em_OUTRAS: []
+  modelo_escolhido: ridge com priori SOA
   esperados_por_secao:
     C: 200.353
     F: 150.967
@@ -23,62 +25,33 @@ meta:
     O: 319.655
     P: 116.85
     Q: 66.01
-  formula: N ~ log_capital_c + cnae_secao + (1 | cnae_secao:cnae_divisao) + (1 | id_estipulante)
-    + offset(log(E))
-  variancias_efeitos_aleatorios:
-    cnae_secao:cnae_divisao: 2.06122469354667e-09
-    id_estipulante: 0.048500609232659
-ae_base: 0.7542629878864443
+  lambda: 0.242101350423175
+  formula: N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)
+  modelo: ridge (glmnet) com priori
+  elasticidade_priori: -0.0986460171456716
+  desvio_elasticidade: 0.000637581663394545
+ae_base: 0.8606538883541587
 capital:
   referencia: 50000.0
-  elasticidade: -0.086316570427516
+  elasticidade: -0.09800843548227706
 secao:
+  C: 1.2562195288307294
+  F: 1.4003696081874035
+  G: 1.2194705314336265
+  H: 1.5319803779892374
+  K: 1.0854771581810188
+  M: 0.9545280492746685
+  N: 1.2138052266284305
   O: 1.0
-  C: 1.4145851278107064
-  F: 1.6819637115538804
-  G: 1.4946960379372052
-  H: 1.8951097170114528
-  K: 1.2930080527806618
-  M: 1.0873007880820975
-  N: 1.430739102270517
-  P: 1.0950813463673392
-  Q: 1.2635760917586403
-secao_nao_vista: 1.368341090556024
-divisao:
-  O:84: 1.0000000045891901
-  C:10: 0.9999999976157862
-  C:13: 1.000000009559164
-  C:20: 0.9999999851260443
-  C:22: 0.9999999927647992
-  C:25: 1.0000000052882458
-  C:28: 1.000000015139763
-  C:29: 0.9999999988400863
-  F:41: 1.0000000035776944
-  F:42: 1.0000000059041056
-  F:43: 0.999999993542407
-  G:45: 1.0000000043645256
-  G:46: 0.999999998348136
-  G:47: 0.9999999995106235
-  H:49: 1.00000000894773
-  H:52: 0.9999999796030801
-  H:53: 1.0000000150172994
-  K:64: 0.9999999986304972
-  K:65: 1.0000000158541285
-  K:66: 0.9999999879299224
-  M:69: 0.9999999975395328
-  M:70: 1.000000012827498
-  M:71: 0.9999999997622985
-  M:73: 0.9999999913186037
-  N:77: 0.9999999983650069
-  N:78: 0.999999993703056
-  N:80: 1.0000000005117708
-  N:81: 0.9999999883148715
-  N:82: 1.0000000247188912
-  P:85: 1.00000000191755
-  Q:86: 0.9999999955862169
-  Q:87: 1.0000000139830911
-  Q:88: 0.9999999919311732
-divisao_nao_vista: 1.0000000010306123
+  P: 0.9928743311793504
+  Q: 1.0295095664483955
+  A: 1.180300625965116
+  B: 1.5792537590889733
+  J: 1.049294060254936
+  S: 1.1362610631213845
+secao_nao_vista: 1.1676210805403318
+divisao: {}
+divisao_nao_vista: 1.0
 fatores_categoricos: {}
 faixas:
   idade:

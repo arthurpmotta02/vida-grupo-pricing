@@ -74,3 +74,9 @@ def test_sinistro_vai_para_ano_da_ocorrencia(tabua_constante):
     xp = experiencia(det, s, _estip(), "2023-12-31")
     assert xp["obitos_observados"].tolist() == [0, 1]
     assert xp.loc[1, "valor_observado"] == 50000.0
+
+
+def test_janela_corta_exposicao_anterior(tabua_constante):
+    v = _vidas([["V1", "1980-06-15", "M", "2022-03-01", None, 100000.0]])
+    det = exposicao_detalhada(v, _estip(), tabua_constante, "2023-12-31", data_inicio="2023-03-01")
+    assert det["dias"].sum() == 306 and det["idade"].tolist() == [42]   # só o 2º ano-apólice, idade em 01/03/2023

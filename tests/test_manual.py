@@ -105,3 +105,49 @@ def test_base_modelagem(tabua_constante, cm):
     assert linha["log_capital_c"] == pytest.approx(np.log(20000 / cm["capital_referencia"]))
     assert set(cel["cnae_secao"]) == {"OUTRAS"}                        # exposição pequena: seções agrupadas
     assert set(cel.loc[cel["id_estipulante"] == "E2", "cnae_divisao"]) == {"ND"}
+
+
+def test_base_modelagem_janela_fora_do_tempo(tabua_constante, cm):
+    est = pd.DataFrame({"id_estipulante": ["E1"], "cnae_secao": ["N"], "cnae_divisao": ["81"],
+                        "data_inicio_vigencia": [T("2022-01-01")], "data_fim_vigencia": [pd.NaT]})
+    vidas = pd.DataFrame({"id_linha": [1], "id_estipulante": ["E1"], "id_vida": ["A"], "data_nascimento": [T("1990-06-01")],
+                          "sexo": ["M"], "data_inicio": [T("2022-01-01")], "data_fim": [pd.NaT], "capital": [20000.0]})
+    sin = pd.DataFrame({"id_sinistro": ["S1", "S2"], "id_estipulante": "E1", "id_vida": ["A", "A"],
+                        "data_ocorrencia": [T("2022-05-01"), T("2024-03-01")]})
+    treino, i1 = M.base_modelagem(vidas, sin, est, tabua_constante, "2025-12-31", cm, janela=(None, "2023-12-31"))
+    teste, i2 = M.base_modelagem(vidas, sin, est, tabua_constante, "2025-12-31", cm, janela=("2024-01-01", "2024-12-31"))
+    assert i1["sinistros_no_periodo"] == 1 and i2["sinistros_no_periodo"] == 1
+    assert treino["exposicao"].sum() == pytest.approx(730 / 365.25) and teste["exposicao"].sum() == pytest.approx(366 / 365.25)
+    with pytest.raises(ValueError, match="maturada"):
+        M.base_modelagem(vidas, sin, est, tabua_constante, "2025-12-31", cm, janela=("2025-01-01", "2025-12-31"))
+
+
+def test_tabela_ridge_reproduz_a_previsao(tabua_constante, cm):
+    """A tabela de fatores da ridge, aplicada pelo multiplicador do cotador, dá a mesma mortalidade que a
+    fórmula do modelo: E x exp(b0 + (beta + delta) x log_cap + log f_priori + gamma)."""
+    b = pd.Series({"(Intercept)": np.log(0.8), "log_capital_c": 0.02, "cnae_secaoC": 0.10, "cnae_secaoK": -0.05})
+    pri = {"elasticidade_capital": -0.10, "fator_secao": {"C": 1.2, "K": 0.9, "F": 1.3}}
+    cel = pd.DataFrame({"cnae_secao": ["C", "K"], "E": [10.0, 5.0]})
+    tab = M.tabela_fatores_ridge(b, pri, cel, cm, {})
+    for s_, gam in (("C", 0.10), ("K", -0.05)):
+        df = pd.DataFrame({"capital": [100000.0], "cnae_secao": [s_], "cnae_divisao": ["x"]})
+        mult, _ = M.multiplicador_manual(df, tab)
+        lc = np.log(100000 / cm["capital_referencia"])
+        esperado = np.exp(np.log(0.8) + (-0.10 + 0.02) * lc + np.log(pri["fator_secao"][s_]) + gam)
+        assert mult[0] == pytest.approx(esperado)
+    assert tab["secao"]["F"] == pytest.approx(1.3 / (1.2 * np.exp(0.10)))      # seção só da priori
+
+
+def test_escolher_modelo():
+    c = pd.DataFrame({"modelo": ["a", "b", "c"], "deviance": [10.0, 11.0, 30.0], "significativa": [False, False, True]})
+    assert M.escolher_modelo(c, ["c", "b", "a"]) == ("b", ["a", "b"])
+
+
+def test_ajustar_tabela_plano_atual_e_metodo_invalido(cm):
+    cel = pd.DataFrame({"id_estipulante": ["A", "B"], "cnae_secao": ["C", "K"], "E": [10.0, 10.0], "N": [12, 10]})
+    tab = M.ajustar_tabela(cel, "plano atual (tábua × A/E)", cm, None, {})
+    assert tab["ae_base"] == pytest.approx(1.1) and tab["meta"]["modelo_escolhido"].startswith("plano")
+    df = pd.DataFrame({"capital": [1e6], "cnae_secao": ["Q"], "cnae_divisao": ["x"]})
+    assert M.multiplicador_manual(df, tab)[0][0] == pytest.approx(1.1)
+    with pytest.raises(ValueError, match="não pode virar tarifa"):
+        M.ajustar_tabela(cel, "LightGBM", cm, None, {})

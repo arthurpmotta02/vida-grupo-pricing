@@ -16,3 +16,5 @@ Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: nbformat; extra == "dev"
 Requires-Dist: nbconvert; extra == "dev"
 Requires-Dist: ipykernel; extra == "dev"
+Provides-Extra: diagnostico
+Requires-Dist: lightgbm>=4.0; extra == "diagnostico"

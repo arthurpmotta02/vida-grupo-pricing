@@ -37,11 +37,23 @@ def _faixa(valores, faixa_cfg) -> pd.Series:
 
 
 def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
-                   data_referencia, cfg_manual: dict, dias_por_ano: float = 365.25) -> tuple[pd.DataFrame, dict]:
+                   data_referencia, cfg_manual: dict, dias_por_ano: float = 365.25,
+                   janela: tuple | None = None) -> tuple[pd.DataFrame, dict]:
     """Células (estipulante x faixa etária x sexo x faixa de capital) com E, N e o log do capital
-    médio da célula (ponderado pelos óbitos esperados, porque o efeito multiplica q_x)."""
-    corte = pd.Timestamp(data_referencia) - pd.DateOffset(months=cfg_manual["meses_maturacao"])
-    det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano)
+    médio da célula (ponderado pelos óbitos esperados, porque o efeito multiplica q_x).
+
+    Sem `janela`: toda a experiência maturada (até data_referencia - meses_maturacao).
+    Com `janela=(inicio, fim)`: só a experiência ocorrida entre as duas datas (separação treino/teste fora
+    do tempo); `fim` não pode passar da data de maturação."""
+    maturado = pd.Timestamp(data_referencia) - pd.DateOffset(months=cfg_manual["meses_maturacao"])
+    inicio = None
+    corte = maturado
+    if janela is not None:
+        inicio, corte = (pd.Timestamp(x) if x is not None else None for x in janela)
+        corte = corte or maturado
+        if corte > maturado:
+            raise ValueError(f"fim da janela ({corte.date()}) depois da experiência maturada ({maturado.date()})")
+    det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano, data_inicio=inicio)
     fx = cfg_manual["faixas"]
     est = estipulantes[["id_estipulante", "cnae_secao", "cnae_divisao"]].copy()
     est["cnae_secao"] = est["cnae_secao"].astype("string").fillna("ND")
@@ -56,7 +68,8 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
     det["faixa_tamanho"] = _faixa(det["vidas_medias"], fx["tamanho"])
     det["E_logcap"] = det["obitos_esperados"] * np.log(det["capital"])
 
-    s = sinistros[sinistros["data_ocorrencia"] <= corte]
+    s = sinistros[(sinistros["data_ocorrencia"] <= corte)
+                  & ((sinistros["data_ocorrencia"] >= inicio) if inicio is not None else True)]
     m = s[["id_sinistro", "id_estipulante", "id_vida", "data_ocorrencia"]].merge(
         det[["id_estipulante", "id_vida", "ini", "fim", "faixa_idade", "sexo", "faixa_capital", "capital"]],
         on=["id_estipulante", "id_vida"], how="inner")
@@ -80,7 +93,8 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
     cel.loc[cel["cnae_secao"].isin(raras), "cnae_secao"] = "OUTRAS"
     n_nd = int((cel["sexo"] == "ND").sum())
     cel = cel[(cel["sexo"] != "ND") & (cel["E"] > 0)].reset_index(drop=True)
-    info = {"corte_experiencia": corte.date().isoformat(), "sinistros_no_periodo": int(len(s)),
+    info = {"inicio_experiencia": inicio.date().isoformat() if inicio is not None else None,
+            "corte_experiencia": corte.date().isoformat(), "sinistros_no_periodo": int(len(s)),
             "sinistros_sem_celula": len(sem_celula), "ids_sem_celula": sem_celula[:50],
             "celulas_sexo_ND_removidas": n_nd, "celulas": int(len(cel)), "estipulantes": int(cel["id_estipulante"].nunique()),
             "obitos": int(cel["N"].sum()), "esperados": float(cel["E"].sum()),
@@ -223,6 +237,90 @@ def tabela_fatores(res: ResultadoGLMM, cfg_manual: dict, meta: dict) -> dict:
         "fatores_categoricos": fat_cat,
         "faixas": cfg_manual["faixas"],
     }
+
+
+def tabela_fatores_ridge(coeficientes: pd.Series, prioris: dict | None, cel: pd.DataFrame, cfg_manual: dict,
+                         meta: dict) -> dict:
+    """Tabela de fatores (mesmo formato de `tabela_fatores`) a partir da ridge do glmnet:
+    log mu = log E + b0 + (beta_priori + delta) * log_capital_c + log f_priori(seção) + gamma(seção).
+    Sem priori, beta_priori = 0 e f_priori = 1. A ridge não tem efeito de grupo: a previsão já é a média
+    da carteira, sem correção de grupo novo."""
+    pri = prioris or {"elasticidade_capital": 0.0, "fator_secao": {}}
+    b = coeficientes
+    gam = {k[len("cnae_secao"):]: v for k, v in b.items() if k.startswith("cnae_secao")}
+    secoes = sorted(set(cel["cnae_secao"].astype(str)))
+    log_f = {s_: np.log(pri["fator_secao"].get(s_, 1.0)) + gam.get(s_, 0.0) for s_ in secoes}
+    base = cel.groupby("cnae_secao")["E"].sum().idxmax()
+    secao = {s_: float(np.exp(log_f[s_] - log_f[base])) for s_ in secoes}
+    for s_, f in pri["fator_secao"].items():        # seções só da priori (sem experiência própria)
+        if s_ not in secao:
+            secao[s_] = float(f / np.exp(log_f[base]))
+    return {
+        "meta": {**meta, "modelo": "ridge (glmnet)" + (" com priori" if prioris else ""),
+                 "elasticidade_priori": pri["elasticidade_capital"],
+                 "desvio_elasticidade": float(b.get("log_capital_c", 0.0))},
+        "ae_base": float(np.exp(b["(Intercept)"] + log_f[base])),
+        "capital": {"referencia": float(cfg_manual["capital_referencia"]),
+                    "elasticidade": float(pri["elasticidade_capital"] + b.get("log_capital_c", 0.0))},
+        "secao": secao,
+        "secao_nao_vista": float(1.0 / np.exp(log_f[base])),
+        "divisao": {},
+        "divisao_nao_vista": 1.0,
+        "fatores_categoricos": {},
+        "faixas": cfg_manual["faixas"],
+    }
+
+
+METODOS_TARIFA = ("ridge com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)")
+
+
+def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: dict | None, meta: dict,
+                   semente: int = 2026) -> dict:
+    """Ajusta um dos métodos que podem virar tarifa e devolve a tabela de fatores no formato do cotador.
+    Usada no notebook 03b (reajuste final com toda a experiência) e no backtest da renovação (05), para que os
+    dois usem exatamente o mesmo método."""
+    meta = {**meta, "modelo_escolhido": metodo,
+            "esperados_por_secao": cel.groupby("cnae_secao")["E"].sum().round(3).to_dict()}
+    if metodo == "GLMM":
+        final, _, _ = ajustar_taxa_manual(cel, cfg_manual)
+        tab = tabela_fatores(final, cfg_manual, {**meta, "efeitos_aleatorios_retirados": final.extra.get("aleatorios_removidos", [])})
+    elif metodo == "GLM":
+        res = ajustar_comparacao(cel, cfg_manual, cfg_manual["modelo"]["fixos_obrigatorios"], "poisson")
+        tab = tabela_fatores(res, cfg_manual, meta)
+    elif metodo == "ridge com priori SOA":
+        from .elasticnet import ajustar_elastic_net
+        from .prioris import offset_priori
+        d = cel.copy()
+        grupos = d["id_estipulante"].unique()
+        mapa = dict(zip(np.random.default_rng(semente).permutation(grupos), np.arange(len(grupos)) % 5))
+        d["fold"] = d["id_estipulante"].map(mapa) + 1
+        d["off_priori"] = offset_priori(d, prioris)
+        r = ajustar_elastic_net(d, {}, ["log_capital_c", "cnae_secao"], ["cnae_secao"], ["log_capital_c"], "off_priori",
+                                alpha=0.0, foldid="fold", semente=semente)
+        tab = tabela_fatores_ridge(r.coeficientes, prioris, d, cfg_manual,
+                                   {**meta, "lambda": r.lambda_escolhido,
+                                    "formula": "N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)"})
+    elif metodo == "plano atual (tábua × A/E)":
+        tab = {"meta": {**meta, "formula": "N = E x A/E da carteira"}, "ae_base": float(cel["N"].sum() / cel["E"].sum()),
+               "capital": {"referencia": float(cfg_manual["capital_referencia"]), "elasticidade": 0.0},
+               "secao": {}, "secao_nao_vista": 1.0, "divisao": {}, "divisao_nao_vista": 1.0,
+               "fatores_categoricos": {}, "faixas": cfg_manual["faixas"]}
+    else:
+        raise ValueError(f"Método {metodo!r} não pode virar tarifa; opções: {METODOS_TARIFA}")
+    tab["meta"].setdefault("formula", tab["meta"].get("formula", ""))
+    tab["meta"]["modelo_escolhido"] = metodo
+    return tab
+
+
+def escolher_modelo(comparacao_vs_melhor: pd.DataFrame, ordem_preferencia: list[str]) -> tuple[str, list[str]]:
+    """Regra de decisão: entre os candidatos empatados com o de menor deviance (IC da diferença contém zero),
+    o primeiro na ordem de preferência. Devolve (escolhido, empatados)."""
+    empatados = comparacao_vs_melhor.loc[~comparacao_vs_melhor["significativa"], "modelo"].tolist()
+    for m in ordem_preferencia:
+        if m in empatados:
+            return m, empatados
+    melhor = comparacao_vs_melhor.sort_values("deviance").iloc[0]["modelo"]
+    return melhor, empatados
 
 
 def _para_python(x):

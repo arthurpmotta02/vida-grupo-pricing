@@ -12,3 +12,6 @@ pytest>=8
 nbformat
 nbconvert
 ipykernel
+
+[diagnostico]
+lightgbm>=4.0

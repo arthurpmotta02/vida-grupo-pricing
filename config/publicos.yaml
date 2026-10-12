@@ -1,0 +1,20 @@
+# Dados públicos reais. Gerados na máquina do usuário por scripts/preparar_dados_publicos.py
+# (os arquivos originais não podem ser baixados do ambiente de CI). Não versionados no git.
+
+pasta: "data/publico"
+
+soa:
+  # SOA 2016 Group Term Life Mortality Study, seguro básico, 2010-2013 (EUA).
+  # Base de comparação (esperados) = taxas do próprio estudo por idade e sexo: o A/E total é 100%.
+  arquivo: "soa_basic_life_morte_agregado.csv.gz"
+  fonte: "https://www.soa.org/resources/experience-studies/2016/2016-group-life-mortality-study/"
+
+ses:
+  # SUSEP SES, Ses_seguros filtrado nos ramos de pessoas (0993 vida, 0977 prestamista, 0982 AP coletivo).
+  arquivo: "ses_seguros_pessoas.csv.gz"
+  cias: "Ses_cias.csv"
+  ramos: "Ses_ramos.csv"
+  fonte: "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
+  # Até 2013 o sinistro está em sinistro_retido; a partir de 2014, em sinistro_ocorrido.
+  # A série de sinistralidade só é comparável a partir deste ano:
+  ano_inicio_serie: 2014

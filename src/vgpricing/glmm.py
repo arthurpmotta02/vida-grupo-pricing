@@ -34,7 +34,7 @@ SCRIPT = RAIZ / "r" / "ajustar_glmm.R"
 def r_disponivel() -> bool:
     if shutil.which("Rscript") is None:
         return False
-    teste = subprocess.run(["Rscript", "-e", "suppressMessages({library(glmmTMB);library(actuar);library(jsonlite)})"],
+    teste = subprocess.run(["Rscript", "-e", "suppressMessages({library(glmmTMB);library(glmnet);library(actuar);library(jsonlite)})"],
                            capture_output=True, text=True)
     return teste.returncode == 0
 
@@ -63,12 +63,13 @@ class ResultadoGLMM:
 def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
                  categoricas: list[str], numericas: list[str], niveis_base: dict | None = None,
                  testar_fixos: list[str] | None = None, testar_aleatorios: list[str] | None = None,
-                 familia: str = "poisson", timeout: int = 900) -> ResultadoGLMM:
+                 familia: str = "poisson", anova: bool = False, timeout: int = 900) -> ResultadoGLMM:
     """Ajusta o modelo no R. `fixos` e `aleatorios` usam a sintaxe de fórmula do R, por exemplo
     fixos=["log_capital_c", "cnae_secao"], aleatorios=["(1|id_estipulante)"] (lista vazia = GLM).
-    familia: "poisson" ou "nbinom2" (Binomial Negativa)."""
+    familia: "poisson" ou "nbinom2" (Binomial Negativa). Sem efeitos aleatórios e com Poisson, o motor é o
+    glm do R base (o do framework da SOA), e `anova=True` devolve a ANOVA sequencial em `extra["anova"]`."""
     if not r_disponivel():
-        raise RuntimeError("R com glmmTMB, actuar e jsonlite não encontrado. Rode `Rscript r/instalar_pacotes.R`.")
+        raise RuntimeError("R com glmmTMB, glmnet, actuar e jsonlite não encontrado. Rode `Rscript r/instalar_pacotes.R`.")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         cols = sorted(set(["N", "E", *categoricas, *numericas]))
@@ -77,7 +78,7 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
                 "fixos": list(fixos), "aleatorios": list(aleatorios),
                 "categoricas": list(categoricas), "numericas": list(numericas),
                 "niveis_base": niveis_base or {}, "testar_fixos": list(testar_fixos or []),
-                "testar_aleatorios": list(testar_aleatorios or []), "familia": familia}
+                "testar_aleatorios": list(testar_aleatorios or []), "familia": familia, "anova": anova}
         (tmp / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
         r = subprocess.run(["Rscript", str(SCRIPT), str(tmp / "spec.json")], capture_output=True, text=True,
                            timeout=timeout)
@@ -86,8 +87,15 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
         out = json.loads((tmp / "saida.json").read_text(encoding="utf-8"))
     m = out["modelo"]
     _lista = lambda x: x if isinstance(x, list) else [x]
-    fixos_df = pd.DataFrame({"nome": _lista(m["fixos"]["nome"]), "estimativa": _lista(m["fixos"]["estimativa"]),
-                             "ep": _lista(m["fixos"]["ep"])})
+    if m.get("loglik") is None:
+        raise RuntimeError("glmmTMB não produziu log-verossimilhança finita (ajuste não convergiu).")
+    removidos = _lista(out.get("aleatorios_removidos") or [])
+    if removidos:
+        import warnings
+        warnings.warn(f"Efeitos aleatórios com variância nula (ajuste singular) retirados e modelo reajustado: {removidos}")
+    _num = lambda x: [np.nan if v is None else float(v) for v in _lista(x)]
+    fixos_df = pd.DataFrame({"nome": _lista(m["fixos"]["nome"]), "estimativa": _num(m["fixos"]["estimativa"]),
+                             "ep": _num(m["fixos"]["ep"])})
     ale = {}
     for g, d in (m.get("aleatorios") or {}).items():
         ale[g] = pd.DataFrame({"nivel": _lista(d["nivel"]), "modo": _lista(d["modo"]),
@@ -97,12 +105,15 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
     ic = m.get("ic_variancias")
     ic_df = None
     if ic:
-        ic_df = pd.DataFrame({"termo": _lista(ic["termo"]), "var_inf": _lista(ic["var_inf"]),
-                              "var_sup": _lista(ic["var_sup"])})
+        ic_df = pd.DataFrame({"termo": _lista(ic["termo"]), "var_inf": _num(ic["var_inf"]),
+                              "var_sup": _num(ic["var_sup"])})
     return ResultadoGLMM(formula=m["formula"], fixos=fixos_df, vcov=np.atleast_2d(np.array(m["vcov_fixos"], float)),
                          variancias=variancias, aleatorios=ale, loglik=float(m["loglik"]), aic=float(m["aic"]),
                          gl=int(m["gl"]), convergiu=bool(m["convergiu"]), testes=testes, especificacao=spec,
-                         ic_variancias=ic_df)
+                         ic_variancias=ic_df, extra={"aleatorios_removidos": removidos, "motor": m.get("motor", "glmmTMB"),
+                                                     "anova": pd.DataFrame(m["anova"]) if m.get("anova") else None,
+                                                     "deviance": m.get("deviance"), "deviance_nula": m.get("deviance_nula"),
+                                                     "dispersao_pearson": m.get("dispersao_pearson")})
 
 
 # --------------------------------------------------------------------------- previsão

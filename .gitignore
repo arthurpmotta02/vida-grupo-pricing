@@ -2,6 +2,8 @@
 data/raw/
 data/processed/
 data/external/*.xlsx
+data/publico/*
+!data/publico/README.md
 !data/external/README.md
 data/synthetic/*
 !data/synthetic/.gitkeep

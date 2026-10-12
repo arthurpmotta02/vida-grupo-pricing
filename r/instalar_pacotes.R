@@ -4,7 +4,7 @@
 lib <- Sys.getenv("R_LIBS_USER")
 dir.create(lib, recursive = TRUE, showWarnings = FALSE)
 .libPaths(c(lib, .libPaths()))
-pacotes <- c("glmmTMB", "actuar", "jsonlite")
+pacotes <- c("glmmTMB", "glmnet", "Matrix", "actuar", "jsonlite")
 faltando <- setdiff(pacotes, rownames(installed.packages()))
 if (length(faltando)) install.packages(faltando, lib = lib, repos = "https://cloud.r-project.org")
 invisible(lapply(pacotes, library, character.only = TRUE))

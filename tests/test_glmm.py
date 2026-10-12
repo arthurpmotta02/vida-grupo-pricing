@@ -63,3 +63,30 @@ def test_prever_bate_com_total_observado():
     df = _simular()
     r = _ajustar(df, ["log_capital_c", "cnae_secao"])
     assert G.prever(r, df).sum() / df["N"].sum() == pytest.approx(1.0, abs=0.05)
+
+
+def test_ajuste_singular_retira_efeito_com_variancia_nula():
+    """Uma divisão por seção: o efeito de divisão fica confundido com o fixo da seção e tem variância nula.
+    O termo é retirado e o modelo reajustado, com aviso, em vez de devolver NA (o que versões recentes do
+    glmmTMB fazem no Windows). O resultado é o mesmo em qualquer versão."""
+    df = _simular()
+    df["cnae_divisao"] = df["cnae_secao"] + "1"
+    with pytest.warns(UserWarning, match="variância nula"):
+        r = G.ajustar_glmm(df, ["log_capital_c", "cnae_secao"], ["(1|cnae_secao:cnae_divisao)", "(1|id_estipulante)"],
+                           categoricas=["id_estipulante", "cnae_secao", "cnae_divisao"], numericas=["log_capital_c"],
+                           niveis_base={"cnae_secao": "A"}, testar_aleatorios=["(1|cnae_secao:cnae_divisao)"])
+    assert r.extra["aleatorios_removidos"] == ["(1|cnae_secao:cnae_divisao)"]
+    assert set(r.variancias) == {"id_estipulante"} and np.isfinite(r.loglik)
+    assert r.testes.loc[0, "p_valor"] == 1.0                                 # sem evidência de heterogeneidade
+    b = r.fixos.set_index("nome")["estimativa"]
+    assert abs(b["cnae_secaoB"] - np.log(1.4)) < 0.1
+
+
+def test_glm_sem_efeitos_aleatorios_usa_stats_glm_com_anova():
+    df = _simular()
+    r = G.ajustar_glmm(df, ["log_capital_c", "cnae_secao"], [], categoricas=["cnae_secao"], numericas=["log_capital_c"],
+                       niveis_base={"cnae_secao": "A"}, anova=True)
+    assert r.extra["motor"] == "stats::glm" and r.convergiu
+    a = r.extra["anova"]
+    assert list(a["termo"]) == ["NULL", "log_capital_c", "cnae_secao"]
+    assert a["deviance"].iloc[1:].sum() == pytest.approx(r.extra["deviance_nula"] - r.extra["deviance"])

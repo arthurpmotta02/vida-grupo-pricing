@@ -1,0 +1,23 @@
+# Parâmetros da comparação de modelos, no formato do apêndice A do framework da SOA (2024).
+# Os nomes da SOA estão entre parênteses.
+
+semente_particao: 2026        # (nTrainSeed)
+fracao_teste: 0.30            # base SOA: partição aleatória (a base não tem ano de observação)
+minimo_esperados_nivel: 30    # agrupamento de níveis raros (CAS Monograph 5, seção 5.5)
+
+elastic_net:
+  alpha: 1.0                  # (fGLMNetAlpha) o texto da SOA descreve penalidade LASSO
+  lambda: "lambda.min"        # SOA 4.3.3: o lambda de menor erro na validação cruzada
+  folds: 5
+  semente: 2026               # (nELSeed)
+  interacoes_do_lightgbm: 3   # (nUseTopLightGBMInteractions)
+  padronizar: true            # padrão do glmnet, como na SOA
+
+lightgbm:                     # (nGBMSeed e parâmetros do modelo) para bases grandes como a da SOA
+  learning_rate: 0.1
+  num_leaves: 15
+  min_data_in_leaf: 200
+  rodadas_max: 1000
+  parada_antecipada: 50
+  folds: 5
+  bootstrap: 200
