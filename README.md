@@ -23,12 +23,12 @@ flowchart LR
   MS -. forma dos efeitos: priori .-> M
   E --> M[03b Taxa manual<br/>candidatos, LightGBM de referência,<br/>teste fora do tempo]
   M --> R[04 Renovação<br/>pooling, IBNR, credibilidade]
-  M --> COT[Cotação de grupo novo]
+  M --> COT2[06 Cotação<br/>taxa comercial e alertas]
   R --> DEC[Decisão comercial]
-  COT --> DEC
+  COT2 --> DEC
   R --> V[05 Validação<br/>SES real, choque, backtest com vários anos]
   M --> V
-  DEC --> MON[Monitoramento<br/>A/E e gatilhos]
+  DEC --> MON[07 Monitoramento<br/>A/E, funnel plot, gatilhos]
   MON -- gatilho --> REV[Revisão<br/>champion/challenger]
   V --> REV
   REV -- nova versão --> M
@@ -60,8 +60,10 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 | `03b_taxa_manual` | Mesmos passos na carteira, com teste fora do tempo (2024): plano atual, GLM, GLMM, ridge com priori SOA; LightGBM e elastic net como referência; SHAP e teste dirigido no GLMM da interação mais forte do LightGBM; escolha pela regra fixada antes; reajuste com toda a experiência | stats::glm, glmmTMB, glmnet (R), lightgbm | pronto |
 | `04_renovacao` | Pooling com encargo, IBNR, credibilidade de Bühlmann-Straub em valor limitado, reajuste com piso e teto, comparação com a regra contratual e com a credibilidade de mercado | chainladder, actuar (R) | pronto |
 | `05_validacao` | Credibilidade testada com dados reais (seguradoras no SES); A/E por ano-calendário (choque e tendência); política para o ano de choque; backtest da renovação com vários anos-alvo | actuar (R) | pronto |
+| `06_cotacao` | Do censo à taxa comercial: taxa manual, pooling, carregamentos e alertas de subscrição (retenção, concentração, idade, porte). Não exige R | pandas | pronto |
+| `07_monitoramento` | A/E mensal contra a taxa manual com IBNR e limites de controle; funnel plot dos grupos com variância entre grupos; gatilhos de revisão; protocolo champion/challenger | scipy | pronto |
+| `report/relatorio.qmd` | Relatório para a gestão (Quarto): método, evidência, fatores em produção, gatilhos e checklist de governança | Quarto | pronto |
 | `90_validacao_sintetica` | Teste de software: o código recupera a verdade do gerador | — | pronto |
-| — | Monitoramento, governança, cotador e relatório Quarto | — | próximo |
 
 ## Como rodar
 
@@ -69,7 +71,8 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 pip install -e ".[dev]"
 Rscript r/instalar_pacotes.R          # R >= 4.2 com glmmTMB, glmnet, actuar e jsonlite
 pytest                                # testes que dependem de R ou de arquivos externos são pulados se faltarem
-jupyter lab                           # notebooks na ordem 01, 02, 03a, 03b, 04, 05; o 90 é opcional
+jupyter lab                           # notebooks na ordem 01 a 07; o 90 é opcional
+quarto render report/relatorio.qmd    # depois dos notebooks (lê artefatos/ e resultados/)
 ```
 
 **Dados públicos (SOA e SES).** Não são versionados. Baixe o zip das tabelas da SOA
@@ -173,6 +176,11 @@ padrão, sem efeito material dentro de uma faixa razoável.
 | Regra de decisão | menor deviance no teste; empate se o IC de 95% da diferença (bootstrap por estipulante) contém zero; preferência: ridge com priori, GLMM, GLM, plano atual | convenção | fixada antes do teste; a ridge com priori vem primeiro por combinar experiência própria e evidência externa |
 | Anos excluídos da experiência da taxa manual | 2021 | dados | choque externo: A/E de 2021 fora do intervalo dos demais anos; mantê-lo superestima o ano de teste (A/M ~0,89 contra ~0,95); no SES, excluir 2020–2022 do histórico reduz o erro nos anos normais (notebook 05) |
 | Anos-alvo do backtest da renovação | 2019, 2022, 2023, 2024 | convenção | anos-apólice que atravessam 2021 ficam fora: nenhum método prevê o choque |
+| Carregamentos da cotação | despesas 10%, corretagem 15%, pró-labore 5%, tributos 4,65%, margem 5% | política | ilustrativos; vêm da nota técnica e do tributário |
+| Alertas de subscrição | retenção R$ 2 mi; maior vida > 10% ou 10 maiores > 30% do capital; idade > 80; menos de 10 vidas | política | ilustrativos; regras de subscrição da seguradora |
+| Limites de controle | 95% (alerta) e 99,8% (ação) | fonte | convenção dos funnel plots (Spiegelhalter, 2005) |
+| Meses imaturos no monitoramento | 3 | dados | com 3 meses de idade ~68% dos sinistros estão avisados; antes disso o ajuste de IBNR é instável |
+| Gatilho de grupos | mais de 1% acima do limite de 99,8% | convenção | 10 vezes o esperado sob a taxa certa (0,1%), com a variância entre grupos já nos limites |
 | Exclusão na SOA | cobertura desconhecida | dados | 217 óbitos esperados e 2 observados: sinistro não vinculado |
 
 ## Limitações conhecidas
@@ -191,15 +199,28 @@ padrão, sem efeito material dentro de uma faixa razoável.
 ```
 config/      parâmetros versionados (cada número de decisão está aqui)
 src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, publicos, estudo, glmm, elasticnet, prioris,
-             avaliacao, graficos, manual, diagnostico, ibnr, renovacao, backtest, verdade
+             avaliacao, graficos, manual, diagnostico, ibnr, renovacao, backtest, cotador, monitoramento, verdade
 r/           GLM e GLMM (stats::glm e glmmTMB), elastic net (glmnet), Bühlmann-Straub (actuar), instalação
 scripts/     preparação dos dados públicos (roda na máquina do usuário)
-notebooks/   01, 02, 03a, 03b, 04 e 05 seguem o fluxo; 90 valida o código contra a verdade do gerador
+notebooks/   01 a 07 seguem o fluxo; 90 valida o código contra a verdade do gerador
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador) e forma da SOA usada como priori
+resultados/  tabelas de decisão gravadas pelos notebooks (lidas pelo relatório)
+report/      relatório em Quarto
 tests/       pytest: casos calculados à mão, reprodução das tabelas da SOA, detecção da sujeira injetada
 templates/   Excel de entrada
 data/        external/ (tábua), publico/ (SOA e SES), raw/ (dados reais), processed/, synthetic/; tudo fora do git
 ```
+
+## Governança: ciclo de revisão
+
+1. **Monitoramento mensal** (07): A/E da carteira e funnel plot dos grupos. Cada gatilho diz a ação: recalibrar a taxa
+   manual, investigar grupos ou cumprir o ciclo anual.
+2. **Revisão (champion/challenger):** o pipeline 03b roda com a experiência atualizada e a mudança proposta como
+   candidato; o desafiante só substitui o modelo em produção se a regra de decisão de `config/manual.yaml` o escolher
+   no teste fora do tempo (05 confirma a renovação).
+3. **Versionamento:** a nova `artefatos/fatores_manual.yaml` registra modelo, dados, anos excluídos, empates e testes;
+   a anterior fica no histórico do git. Cotação (06) e renovação (04) passam a ler a nova.
+4. **Relatório** (`report/relatorio.qmd`) com o checklist ASOP 23, 25 e 56 e LGPD.
 
 ## Governança e LGPD
 

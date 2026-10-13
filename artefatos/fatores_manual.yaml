@@ -7,6 +7,8 @@ meta:
   obitos: 2772
   esperados_tabua: 2664.6
   teste_fora_do_tempo: 2024-01-01 a 2024-12-31
+  anos_excluidos_experiencia:
+  - 2021
   candidatos_empatados_no_teste:
   - GLM
   - ridge com priori SOA

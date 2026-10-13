@@ -1,0 +1,116 @@
+---
+title: "Precificação e renovação de Vida em Grupo"
+subtitle: "Relatório para a gestão: método, evidência e governança"
+lang: pt-BR
+format:
+  html:
+    toc: true
+    number-sections: true
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+jupyter: python3
+---
+
+```{python}
+import sys
+from pathlib import Path
+RAIZ = Path.cwd().parent if Path.cwd().name == "report" else Path.cwd()
+sys.path.insert(0, str(RAIZ / "src"))
+import pandas as pd
+from vgpricing.manual import carregar_tabela
+pd.set_option("display.float_format", lambda x: f"{x:,.3f}")
+fatores = carregar_tabela(RAIZ / "artefatos/fatores_manual.yaml")
+prioris = carregar_tabela(RAIZ / "artefatos/prioris_soa.yaml")
+res = RAIZ / "resultados"
+```
+
+# Resumo
+
+A taxa de um grupo de vida é construída em três camadas, cada uma com a sua evidência:
+
+1. **Tábua oficial** (BR-EMSmt 2026, SUSEP): a mortalidade esperada por idade e sexo.
+2. **Taxa manual**: fatores de **atividade** (seção CNAE) e **capital** sobre a tábua, estimados na carteira com a
+   forma de um estudo de mercado real (SOA, vida em grupo) como referência. É a taxa de um grupo novo.
+3. **Renovação**: a experiência do próprio grupo, com **credibilidade** proporcional ao seu volume, mais pooling dos
+   sinistros de capital alto e IBNR.
+
+```{python}
+#| output: asis
+m = fatores["meta"]
+br = lambda x: f"{x:,}".replace(",", ".")
+excluidos = ", ".join(str(a) for a in m.get("anos_excluidos_experiencia", [])) or "nenhum"
+print(f"- **Modelo da taxa manual em produção:** {m['modelo_escolhido']} (experiência até {m['corte_experiencia']}; "
+      f"{br(m['obitos'])} óbitos; anos excluídos por choque externo: {excluidos}).")
+dec = lambda x: f"{x:.3f}".replace(".", ",")
+print(f"- **Efeito do capital:** dobrar o capital multiplica a mortalidade esperada por "
+      f"{dec(2 ** fatores['capital']['elasticidade'])} (estudo de mercado: {dec(2 ** prioris['elasticidade_capital'])}).")
+```
+
+# Por que confiar nas escolhas
+
+Cada escolha foi testada **fora do tempo**: o modelo é ajustado com dados até uma data e avaliado no período seguinte,
+que ele não viu (ASOP 56; monografia nº 5 da CAS). Os números abaixo vêm dos notebooks e são regravados a cada execução.
+
+## Taxa manual: candidatos no ano de teste
+
+```{python}
+c = pd.read_csv(res / "03b_comparacao_teste.csv")
+c[["modelo", "papel", "deviance", c.columns[2], "IC95 inf", "IC95 sup", "significativa", "escolhido"]]
+```
+
+Menor deviance é melhor. "Significativa" indica que o intervalo de 95% da diferença contra o melhor candidato não
+contém zero. Entre os empatados, vale a ordem de preferência fixada antes do teste. LightGBM e elastic net com
+interações são referências de desempenho, não tarifa.
+
+## Credibilidade com dados reais do mercado brasileiro
+
+Prevendo a sinistralidade de cada seguradora no ramo vida no ano seguinte (SUSEP SES), em anos normais:
+
+```{python}
+pd.read_csv(res / "05_credibilidade_ses.csv")
+```
+
+## Renovação: backtest com vários anos-alvo
+
+```{python}
+pd.read_csv(res / "05_backtest_renovacao.csv")
+```
+
+Diferença negativa contra "só taxa manual" com intervalo abaixo de zero: o método prevê melhor que ignorar a experiência
+do grupo, com significância.
+
+# Fatores em produção
+
+```{python}
+s = pd.Series(fatores["secao"]).sort_values().rename("fator de atividade (seção CNAE; base = 1)")
+s.to_frame()
+```
+
+# Monitoramento
+
+```{python}
+pd.read_csv(res / "07_gatilhos.csv")
+```
+
+# Limitações
+
+- Não há base pública de vidas e sinistros por estipulante: a renovação foi demonstrada numa carteira sintética
+  calibrada em fontes reais. O mesmo código roda na base da seguradora.
+- O estudo de mercado é americano (2010–2013); só a forma relativa dos efeitos é usada, com penalização.
+- Carregamentos, retenção, piso e teto do reajuste são política da seguradora; os valores do projeto são ilustrativos.
+- Só a cobertura de morte por qualquer causa está modelada.
+
+# Checklist de governança
+
+| Item | Onde | Referência |
+|---|---|---|
+| Qualidade e rastreabilidade dos dados (log de exceções, regras versionadas) | notebook 01, `config/base.yaml` | ASOP 23 |
+| Fontes externas identificadas e conferidas (tábua por hash; SOA reproduzida contra o relatório) | `data/external`, `tests/test_publicos.py` | ASOP 23 |
+| Premissas documentadas com tipo de justificativa | README, tabela de parâmetros | ASOP 25, 56 |
+| Validação fora do tempo e comparação com alternativa | notebooks 03b e 05 | ASOP 56 |
+| Credibilidade com equilíbrio entre responsividade e estabilidade | notebooks 04 e 05 | ASOP 25 |
+| Controle de mudanças (champion/challenger, versionamento) | notebook 07, git | ASOP 56 |
+| Monitoramento com gatilhos | notebook 07, `config/monitoramento.yaml` | ASOP 56 |
+| Proteção de dados pessoais | `.gitignore`, `io.hash_id` | LGPD |

@@ -1,0 +1,17 @@
+# Cotação de grupo novo. Carregamentos e limites são POLÍTICA da seguradora (nota técnica, resseguro,
+# apetite de risco): os valores abaixo são ilustrativos.
+
+carregamentos:                 # frações do prêmio comercial
+  despesas_administrativas: 0.10
+  comissao_corretagem: 0.15
+  pro_labore_estipulante: 0.05
+  tributos_sobre_premio: 0.0465   # ILUSTRATIVO (PIS/COFINS); confirmar com o tributário
+margem_seguranca: 0.05            # sobre o prêmio puro
+# taxa comercial = taxa pura x (1 + margem) / (1 - soma dos carregamentos)
+
+alertas:
+  limite_retencao: 2000000        # capital individual acima disso: resseguro facultativo
+  maior_capital_sobre_total: 0.10 # concentração: uma vida com mais de 10% do capital do grupo
+  dez_maiores_sobre_total: 0.30   # concentração: as 10 maiores com mais de 30%
+  idade_maxima_aceitacao: 80
+  minimo_vidas: 10

@@ -1,0 +1,4 @@
+gatilho,disparou,valor,ação
+A/E 12m da carteira fora do limite de 99.8%,False,1.005 (limites 0.877 a 1.128),recalibrar a taxa manual (champion/challenger)
+grupos acima do limite de 99.8%,True,1.20% dos grupos (esperado: 0.10%; limites com variância entre grupos tau2 = 0.153),investigar subscrição e cadastro dos grupos
+idade da experiência que calibrou a tabela,False,12 meses desde o corte (2024-12-31),ciclo anual de recalibração
