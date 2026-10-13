@@ -65,3 +65,15 @@ def test_ida_e_volta_parquet_pelo_leitor_real(carteira, cfg_sint_pequeno, cfg_ba
     # vidas sem sexo (V05) recebem a média M/F, não somem
     v05 = set(r.excecoes.loc[r.excecoes["codigo"] == "V05", "id_linha"])
     assert det["id_linha"].isin(v05).any()
+
+
+def test_choque_pandemico_so_nos_dias_do_ano():
+    """Intensidade x2 só em 2021: o risco no 2º semestre de 2021 dobra a intensidade, e o de 2022 volta ao normal."""
+    from vgpricing.sintetico import _tempo_obito
+    rng = np.random.default_rng(0)
+    n = 200000
+    t = _tempo_obito(rng, np.full(n, 0.5), np.zeros(n, int), 365, np.datetime64("2021-07-01"), {"ano": 2021, "fator": 2.0})
+    d1 = (t < 184).mean()
+    d2 = ((t >= 184) & (t < 365)).sum() / (t >= 184).sum()
+    assert abs(d1 - (1 - np.exp(-0.5 * 2 * 184 / 365.25))) < 0.005
+    assert abs(d2 - (1 - np.exp(-0.5 * 181 / 365.25))) < 0.005

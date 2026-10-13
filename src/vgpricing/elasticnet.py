@@ -38,6 +38,14 @@ def ajustar_elastic_net(treino: pd.DataFrame, prever: dict[str, pd.DataFrame], t
     """`termos` usa sintaxe de fórmula do R (ex.: ["faixa_capital", "atividade", "sexo:faixa_idade"]).
     `offset` é o nome da coluna com o log do esperado (tábua + priori, se houver). `foldid`: coluna com a
     partição da validação cruzada (ex.: por estipulante); sem ela, partição aleatória em `nfolds`."""
+    unicos = [c for c in categoricas if treino[c].nunique() < 2]
+    if unicos:     # fator de um nível só (ex.: pouca experiência, tudo em "OUTRAS"): não há o que estimar
+        import warnings
+        warnings.warn(f"Variáveis com um único nível no treino, retiradas do elastic net: {unicos}")
+        termos = [t for t in termos if not set(t.split(":")) & set(unicos)]
+        categoricas = [c for c in categoricas if c not in unicos]
+        if not termos:
+            raise ValueError("nenhum termo restante para o elastic net")
     colunas = sorted(set(["N", offset, *categoricas, *numericas] + ([foldid] if foldid else [])))
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)

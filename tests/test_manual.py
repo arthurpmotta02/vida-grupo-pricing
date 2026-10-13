@@ -151,3 +151,32 @@ def test_ajustar_tabela_plano_atual_e_metodo_invalido(cm):
     assert M.multiplicador_manual(df, tab)[0][0] == pytest.approx(1.1)
     with pytest.raises(ValueError, match="não pode virar tarifa"):
         M.ajustar_tabela(cel, "LightGBM", cm, None, {})
+
+
+def test_base_modelagem_exclui_anos(tabua_constante, cm):
+    est = pd.DataFrame({"id_estipulante": ["E1"], "cnae_secao": ["N"], "cnae_divisao": ["81"],
+                        "data_inicio_vigencia": [T("2021-01-01")], "data_fim_vigencia": [pd.NaT]})
+    vidas = pd.DataFrame({"id_linha": [1], "id_estipulante": ["E1"], "id_vida": ["A"], "data_nascimento": [T("1990-06-01")],
+                          "sexo": ["M"], "data_inicio": [T("2021-01-01")], "data_fim": [pd.NaT], "capital": [20000.0]})
+    sin = pd.DataFrame({"id_sinistro": ["S1", "S2"], "id_estipulante": "E1", "id_vida": ["A", "A"],
+                        "data_ocorrencia": [T("2022-05-01"), T("2023-03-01")]})
+    cel, info = M.base_modelagem(vidas, sin, est, tabua_constante, "2024-12-31", cm, excluir_anos=(2022,))
+    assert info["sinistros_no_periodo"] == 1                                   # o de 2022 sai
+    assert cel["exposicao"].sum() == pytest.approx((365 + 365) / 365.25)       # 2021 e 2023, sem 2022
+
+
+def test_exclusao_de_anos_respeita_o_inicio_da_janela(tabua_constante, cm):
+    """Janela que começa depois do ano excluído: a exposição não pode recomeçar logo após o ano excluído."""
+    est = pd.DataFrame({"id_estipulante": ["E1"], "cnae_secao": ["N"], "cnae_divisao": ["81"],
+                        "data_inicio_vigencia": [T("2020-01-01")], "data_fim_vigencia": [pd.NaT]})
+    vidas = pd.DataFrame({"id_linha": [1], "id_estipulante": ["E1"], "id_vida": ["A"], "data_nascimento": [T("1990-06-01")],
+                          "sexo": ["M"], "data_inicio": [T("2020-01-01")], "data_fim": [pd.NaT], "capital": [20000.0]})
+    sin = pd.DataFrame({"id_sinistro": ["S1"], "id_estipulante": ["E1"], "id_vida": ["A"], "data_ocorrencia": [T("2023-03-01")]})
+    sem, _ = M.base_modelagem(vidas, sin, est, tabua_constante, "2024-12-31", cm, janela=("2023-01-01", "2023-12-31"))
+    com, _ = M.base_modelagem(vidas, sin, est, tabua_constante, "2024-12-31", cm, janela=("2023-01-01", "2023-12-31"),
+                              excluir_anos=(2021,))
+    assert com["exposicao"].sum() == pytest.approx(sem["exposicao"].sum()) == pytest.approx(365 / 365.25)
+    # janela que termina antes do ano excluído: o pedaço anterior é cortado no fim da janela, não descartado
+    antes, _ = M.base_modelagem(vidas, sin, est, tabua_constante, "2024-12-31", cm, janela=(None, "2020-06-30"),
+                                excluir_anos=(2021,))
+    assert antes["exposicao"].sum() == pytest.approx(182 / 365.25)

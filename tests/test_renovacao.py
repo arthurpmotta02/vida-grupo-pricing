@@ -91,3 +91,18 @@ def test_experiencia_limita_ao_pooling_e_separa_excesso(tabua_constante):
     assert xp.loc[0, "V_excesso"] == pytest.approx(0.001 * t * 400000)
     assert xp.loc[0, "V"] == pytest.approx(100000.0) and xp.loc[0, "V_total"] == pytest.approx(500000.0)
     assert xp.loc[0, "IBNR_v"] == pytest.approx(0.0)
+
+
+@requer_r
+def test_credibilidade_mercado_favorece_credibilidade_com_unidades_pequenas():
+    """Unidades com média própria verdadeira e pouco peso: Bühlmann-Straub erra menos que a experiência própria."""
+    from vgpricing.backtest import credibilidade_mercado
+    rng = np.random.default_rng(1)
+    linhas = []
+    for u in range(60):
+        th = rng.normal(0.5, 0.05)
+        w = 1.0 if u % 2 else 50.0
+        for ano in range(2015, 2024):
+            linhas.append({"unidade": f"U{u}", "ano": ano, "w": w, "x": th + rng.normal(0, 0.3 / np.sqrt(w))})
+    r = credibilidade_mercado(pd.DataFrame(linhas), list(range(2019, 2024)), janela=4, n_boot=300)["resumo"].set_index("metodo")
+    assert r.loc["Bühlmann-Straub", "erro quadrático ponderado"] < r.loc["experiência própria", "erro quadrático ponderado"]

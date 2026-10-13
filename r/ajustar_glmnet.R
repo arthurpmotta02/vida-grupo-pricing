@@ -20,9 +20,11 @@ todos$N <- as.numeric(todos$N)
 todos$offset <- as.numeric(todos[[spec$offset]])
 
 f <- as.formula(paste("~", paste(spec$termos, collapse = " + ")))
-contr <- lapply(todos[intersect(spec$categoricas, all.vars(f))], contrasts, contrasts = FALSE)
+cats <- intersect(as.character(unlist(spec$categoricas)), all.vars(f))
+contr <- if (length(cats)) lapply(todos[cats], contrasts, contrasts = FALSE) else NULL
 # matriz esparsa: com interações e centenas de milhares de linhas, a densa não caberia na memória
 X <- sparse.model.matrix(f, data = todos, contrasts.arg = contr)[, -1, drop = FALSE]
+if (ncol(X) < 2) X <- cbind(X, .nula = 0)   # o glmnet exige 2+ colunas; a coluna nula fica com coeficiente 0
 Xtr <- X[seq_len(n_tr), , drop = FALSE]
 set.seed(spec$semente)
 args_cv <- list(x = Xtr, y = todos$N[seq_len(n_tr)], family = "poisson", offset = todos$offset[seq_len(n_tr)],

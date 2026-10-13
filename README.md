@@ -26,7 +26,7 @@ flowchart LR
   M --> COT[Cotação de grupo novo]
   R --> DEC[Decisão comercial]
   COT --> DEC
-  R --> V[Validação<br/>backtest fora do tempo]
+  R --> V[05 Validação<br/>SES real, choque, backtest com vários anos]
   M --> V
   DEC --> MON[Monitoramento<br/>A/E e gatilhos]
   MON -- gatilho --> REV[Revisão<br/>champion/challenger]
@@ -59,8 +59,8 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 | `03a_modelo_mercado_soa` | Framework da SOA em dados reais de vida em grupo: GLM, LightGBM e elastic net com as interações do LightGBM, comparados no teste (deviance, MSE, MAE, Gini, A/M); forma dos efeitos exportada como priori | stats::glm, glmnet (R), lightgbm | pronto |
 | `03b_taxa_manual` | Mesmos passos na carteira, com teste fora do tempo (2024): plano atual, GLM, GLMM, ridge com priori SOA; LightGBM e elastic net como referência; SHAP e teste dirigido no GLMM da interação mais forte do LightGBM; escolha pela regra fixada antes; reajuste com toda a experiência | stats::glm, glmmTMB, glmnet (R), lightgbm | pronto |
 | `04_renovacao` | Pooling com encargo, IBNR, credibilidade de Bühlmann-Straub em valor limitado, reajuste com piso e teto, comparação com a regra contratual e com a credibilidade de mercado | chainladder, actuar (R) | pronto |
+| `05_validacao` | Credibilidade testada com dados reais (seguradoras no SES); A/E por ano-calendário (choque e tendência); política para o ano de choque; backtest da renovação com vários anos-alvo | actuar (R) | pronto |
 | `90_validacao_sintetica` | Teste de software: o código recupera a verdade do gerador | — | pronto |
-| — | Validação: backtest com vários anos-alvo, credibilidade testada no SES, tratamento de pandemia e tendência | — | próximo |
 | — | Monitoramento, governança, cotador e relatório Quarto | — | próximo |
 
 ## Como rodar
@@ -69,7 +69,7 @@ reproduz as tabelas da SOA com diferença zero (`tests/test_publicos.py`).
 pip install -e ".[dev]"
 Rscript r/instalar_pacotes.R          # R >= 4.2 com glmmTMB, glmnet, actuar e jsonlite
 pytest                                # testes que dependem de R ou de arquivos externos são pulados se faltarem
-jupyter lab                           # notebooks na ordem 01, 02, 03a, 03b, 04; o 90 é opcional
+jupyter lab                           # notebooks na ordem 01, 02, 03a, 03b, 04, 05; o 90 é opcional
 ```
 
 **Dados públicos (SOA e SES).** Não são versionados. Baixe o zip das tabelas da SOA
@@ -171,6 +171,8 @@ padrão, sem efeito material dentro de uma faixa razoável.
 | Elastic net | alpha = 1 (LASSO), `lambda.min`, 3 interações do LightGBM | fonte | framework da SOA (4.3 e apêndice A) |
 | Ridge com priori | alpha = 0, lambda por validação cruzada por estipulante | fonte | ridge = priori normal (SOA 4.3.1) |
 | Regra de decisão | menor deviance no teste; empate se o IC de 95% da diferença (bootstrap por estipulante) contém zero; preferência: ridge com priori, GLMM, GLM, plano atual | convenção | fixada antes do teste; a ridge com priori vem primeiro por combinar experiência própria e evidência externa |
+| Anos excluídos da experiência da taxa manual | 2021 | dados | choque externo: A/E de 2021 fora do intervalo dos demais anos; mantê-lo superestima o ano de teste (A/M ~0,89 contra ~0,95); no SES, excluir 2020–2022 do histórico reduz o erro nos anos normais (notebook 05) |
+| Anos-alvo do backtest da renovação | 2019, 2022, 2023, 2024 | convenção | anos-apólice que atravessam 2021 ficam fora: nenhum método prevê o choque |
 | Exclusão na SOA | cobertura desconhecida | dados | 217 óbitos esperados e 2 observados: sinistro não vinculado |
 
 ## Limitações conhecidas
@@ -179,8 +181,9 @@ padrão, sem efeito material dentro de uma faixa razoável.
   seguradoras como unidade e sinistralidade com carregamento: é um substituto, não a validação final.
 - **SOA é americana:** só a forma relativa dos efeitos é usada, com encolhimento; o mapeamento SIC → CNAE e de
   faixas em dólar para reais é julgamento documentado.
-- **Pandemia e tendência:** no SES, a sinistralidade do ramo vida foi de cerca de 46% para 76% em 2021. A política
-  para anos pandêmicos e o fator de tendência entram na etapa de validação.
+- **Pandemia e tendência:** tratadas no notebook 05. Anos de choque saem da experiência da taxa manual; não há
+  tendência fora do choque, então não há fator de tendência (na base real, se houver, o ano-calendário entra no
+  modelo). A experiência da renovação ainda inclui o ano de choque.
 - **Cobertura:** só morte por qualquer causa. IPA, IFPD e funeral ficam para uma versão seguinte.
 
 ## Estrutura
@@ -191,7 +194,7 @@ src/vgpricing/  tabua, io, validacao, exposicao, sintetico, template, publicos, 
              avaliacao, graficos, manual, diagnostico, ibnr, renovacao, backtest, verdade
 r/           GLM e GLMM (stats::glm e glmmTMB), elastic net (glmnet), Bühlmann-Straub (actuar), instalação
 scripts/     preparação dos dados públicos (roda na máquina do usuário)
-notebooks/   01, 02, 03a, 03b e 04 seguem o fluxo; 90 valida o código contra a verdade do gerador
+notebooks/   01, 02, 03a, 03b, 04 e 05 seguem o fluxo; 90 valida o código contra a verdade do gerador
 artefatos/   tabela de fatores da taxa manual (lida pelo cotador) e forma da SOA usada como priori
 tests/       pytest: casos calculados à mão, reprodução das tabelas da SOA, detecção da sujeira injetada
 templates/   Excel de entrada

@@ -78,6 +78,23 @@ def _filtrar(a: dict, m: np.ndarray) -> dict:
     return {k: v[m] for k, v in a.items()}
 
 
+def _tempo_obito(rng, mu: np.ndarray, offset: np.ndarray, L: int, ps64, pandemia: dict | None) -> np.ndarray:
+    """Dias até o óbito, contados do início da exposição de cada vida no ano-apólice. Intensidade constante mu (por
+    ano) e, nos dias do ano pandêmico, mu x fator: sorteio pela transformada inversa da intensidade acumulada."""
+    taxa = mu / DIA_ANO
+    u = rng.exponential(1.0, len(mu))
+    if not pandemia:
+        return u / taxa
+    p0 = (np.datetime64(f"{pandemia['ano']}-01-01") - ps64).astype(int)
+    p1 = (np.datetime64(f"{pandemia['ano']}-12-31") - ps64).astype(int) + 1
+    a = np.clip(p0 - offset, 0, None).astype(float)                   # trecho pandêmico em dias desde a entrada
+    b = np.maximum(a, (p1 - offset).astype(float))
+    f = pandemia["fator"]
+    h_a, h_b = taxa * a, taxa * a + taxa * f * (b - a)                 # intensidade acumulada nos pontos de troca
+    return np.where(u <= h_a, u / taxa,
+                    np.where(u <= h_b, a + (u - h_a) / (taxa * f), b + (u - h_b) / taxa))
+
+
 def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
     rng = np.random.default_rng(cfg["semente"])
     data_ref = np.datetime64(cfg["data_referencia"], "D")
@@ -154,7 +171,7 @@ def gerar_carteira(cfg: dict, tabua: Tabua) -> dict[str, pd.DataFrame]:
             idade = _idade_np(todos["nasc"], ini)
             q = np.minimum(tabua.q(idade, todos["sexo"]) * fator * todos["mult_renda"], 0.999)
             mu = -np.log(1 - q)
-            td = rng.exponential(1 / mu) * DIA_ANO
+            td = _tempo_obito(rng, mu, offset, L, ps64, cfg.get("pandemia"))
             te = rng.exponential(1 / lam, n) * DIA_ANO
             R = L - offset
             if n >= 10 and rng.random() < cs["prob_evento_catastrofico"] * L / DIA_ANO:

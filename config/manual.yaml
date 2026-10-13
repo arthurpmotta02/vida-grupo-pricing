@@ -3,6 +3,12 @@
 meses_maturacao: 12        # experiência só até data_referencia - 12 meses (evita IBNR na estimação)
 capital_referencia: 50000  # capital em que o fator de capital vale 1
 
+# Anos com choque externo identificado, retirados da experiência da taxa manual (exposição e óbitos).
+# Política, com evidência no notebook 05: na carteira, o A/E de 2021 (pandemia) fica fora do intervalo dos demais
+# anos e, se mantido, a taxa manual superestima 2024 em ~11% (contra ~5% sem ele); no SES, a sinistralidade do
+# mercado em 2021 foi de ~76% contra ~46% nos anos normais.
+excluir_anos_experiencia: [2021]
+
 faixas:                    # usadas para formar células e para os fatores candidatos
   idade:   {limites: [0, 30, 40, 50, 60, 200], rotulos: ["ate29", "30-39", "40-49", "50-59", "60+"]}
   capital: {limites: [0, 30000, 60000, 150000, 400000, .inf],

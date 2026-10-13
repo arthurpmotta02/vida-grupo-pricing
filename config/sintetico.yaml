@@ -5,9 +5,12 @@
 semente: 2026
 data_referencia: "2025-12-31"
 n_estipulantes: 250
-anos_historico: [3, 5]
+anos_historico: [6, 8]
 tamanho: {min: 30, max: 5000}          # log-uniforme
-sigma_efeito_grupo: 0.30                # heterogeneidade entre estipulantes (lognormal, média 1)
+sigma_efeito_grupo: 0.30
+# Choque pandêmico (hipótese): mortalidade multiplicada por `fator` durante o ano-calendário `ano`. Referência de
+# ordem de grandeza: no SES, a sinistralidade do ramo vida subiu de ~46% para ~76% em 2021 (todas as coberturas).
+pandemia: {ano: 2021, fator: 1.30}                # heterogeneidade entre estipulantes (lognormal, média 1)
 rotatividade_anual: 0.15
 crescimento_anual_sd: 0.05
 proporcao_afastados: 0.005

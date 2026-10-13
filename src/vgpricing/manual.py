@@ -38,7 +38,7 @@ def _faixa(valores, faixa_cfg) -> pd.Series:
 
 def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
                    data_referencia, cfg_manual: dict, dias_por_ano: float = 365.25,
-                   janela: tuple | None = None) -> tuple[pd.DataFrame, dict]:
+                   janela: tuple | None = None, excluir_anos: tuple[int, ...] = ()) -> tuple[pd.DataFrame, dict]:
     """Células (estipulante x faixa etária x sexo x faixa de capital) com E, N e o log do capital
     médio da célula (ponderado pelos óbitos esperados, porque o efeito multiplica q_x).
 
@@ -53,7 +53,21 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
         corte = corte or maturado
         if corte > maturado:
             raise ValueError(f"fim da janela ({corte.date()}) depois da experiência maturada ({maturado.date()})")
-    det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano, data_inicio=inicio)
+    if excluir_anos:      # experiência em pedaços que pulam os anos excluídos
+        partes, ini_p = [], inicio
+        for ano in sorted(excluir_anos):
+            fim_p = min(pd.Timestamp(f"{ano - 1}-12-31"), corte)
+            if ini_p is None or fim_p >= ini_p:
+                partes.append(exposicao_detalhada(vidas, estipulantes, tabua, fim_p, dias_por_ano, data_inicio=ini_p))
+            depois = pd.Timestamp(f"{ano + 1}-01-01")
+            ini_p = depois if ini_p is None else max(ini_p, depois)     # nunca antes do início da janela
+        if ini_p <= corte:
+            partes.append(exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano, data_inicio=ini_p))
+        if not partes:
+            raise ValueError(f"sem experiência entre {inicio} e {corte.date()} fora dos anos excluídos {list(excluir_anos)}")
+        det = pd.concat(partes, ignore_index=True)
+    else:
+        det = exposicao_detalhada(vidas, estipulantes, tabua, corte, dias_por_ano, data_inicio=inicio)
     fx = cfg_manual["faixas"]
     est = estipulantes[["id_estipulante", "cnae_secao", "cnae_divisao"]].copy()
     est["cnae_secao"] = est["cnae_secao"].astype("string").fillna("ND")
@@ -69,7 +83,8 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
     det["E_logcap"] = det["obitos_esperados"] * np.log(det["capital"])
 
     s = sinistros[(sinistros["data_ocorrencia"] <= corte)
-                  & ((sinistros["data_ocorrencia"] >= inicio) if inicio is not None else True)]
+                  & ((sinistros["data_ocorrencia"] >= inicio) if inicio is not None else True)
+                  & ~sinistros["data_ocorrencia"].dt.year.isin(list(excluir_anos))]
     m = s[["id_sinistro", "id_estipulante", "id_vida", "data_ocorrencia"]].merge(
         det[["id_estipulante", "id_vida", "ini", "fim", "faixa_idade", "sexo", "faixa_capital", "capital"]],
         on=["id_estipulante", "id_vida"], how="inner")
@@ -94,7 +109,8 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
     n_nd = int((cel["sexo"] == "ND").sum())
     cel = cel[(cel["sexo"] != "ND") & (cel["E"] > 0)].reset_index(drop=True)
     info = {"inicio_experiencia": inicio.date().isoformat() if inicio is not None else None,
-            "corte_experiencia": corte.date().isoformat(), "sinistros_no_periodo": int(len(s)),
+            "corte_experiencia": corte.date().isoformat(), "anos_excluidos": list(excluir_anos),
+            "sinistros_no_periodo": int(len(s)),
             "sinistros_sem_celula": len(sem_celula), "ids_sem_celula": sem_celula[:50],
             "celulas_sexo_ND_removidas": n_nd, "celulas": int(len(cel)), "estipulantes": int(cel["id_estipulante"].nunique()),
             "obitos": int(cel["N"].sum()), "esperados": float(cel["E"].sum()),
@@ -220,6 +236,7 @@ def tabela_fatores_ridge(coeficientes: pd.Series, prioris: dict | None, cel: pd.
     da carteira, sem correção de grupo novo."""
     pri = prioris or {"elasticidade_capital": 0.0, "fator_secao": {}}
     b = coeficientes
+    b = b.drop(".nula", errors="ignore")
     gam = {k[len("cnae_secao"):]: v for k, v in b.items() if k.startswith("cnae_secao")}
     secoes = sorted(set(cel["cnae_secao"].astype(str)))
     log_f = {s_: np.log(pri["fator_secao"].get(s_, 1.0)) + gam.get(s_, 0.0) for s_ in secoes}
@@ -267,8 +284,11 @@ def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: di
         from .avaliacao import folds_por_grupo
         d["fold"] = folds_por_grupo(d["id_estipulante"], cfg_manual["validacao_cruzada"]["folds"], semente) + 1
         d["off_priori"] = offset_priori(d, prioris)
-        r = ajustar_elastic_net(d, {}, ["log_capital_c", "cnae_secao"], ["cnae_secao"], ["log_capital_c"], "off_priori",
-                                alpha=0.0, foldid="fold", semente=semente)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Variáveis com um único nível")   # pouca experiência: só a priori
+            r = ajustar_elastic_net(d, {}, ["log_capital_c", "cnae_secao"], ["cnae_secao"], ["log_capital_c"], "off_priori",
+                                    alpha=0.0, foldid="fold", semente=semente)
         tab = tabela_fatores_ridge(r.coeficientes, prioris, d, cfg_manual,
                                    {**meta, "lambda": r.lambda_escolhido,
                                     "formula": "N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)"})

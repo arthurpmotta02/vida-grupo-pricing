@@ -46,3 +46,12 @@ def test_priori_correta_no_offset_melhora_teste_quando_ha_pouca_experiencia():
     sem = ajustar_elastic_net(d, {"teste": teste}, ["nivel"], ["nivel"], [], "log_E", alpha=0.0, nfolds=5)
     com = ajustar_elastic_net(d, {"teste": teste}, ["nivel"], ["nivel"], [], "log_E_priori", alpha=0.0, nfolds=5)
     assert deviance_poisson(teste["N"], com.previsoes["teste"]) < deviance_poisson(teste["N"], sem.previsoes["teste"])
+
+
+def test_fator_de_um_nivel_e_uma_coluna_so():
+    """Pouca experiência: a seção tem um nível só. O fator sai (com aviso) e o ajuste roda com uma coluna."""
+    from vgpricing.elasticnet import ajustar_elastic_net
+    d = _dados().assign(secao="OUTRAS", lc=lambda x: np.random.default_rng(0).normal(0, 1, len(x)))
+    with pytest.warns(UserWarning, match="único nível"):
+        r = ajustar_elastic_net(d, {}, ["lc", "secao"], ["secao"], ["lc"], "log_E", alpha=0.0, nfolds=3)
+    assert "lc" in r.coeficientes.index and np.isfinite(r.coeficientes).all()

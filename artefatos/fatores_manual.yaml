@@ -1,55 +1,53 @@
 meta:
-  gerado_em: '2026-10-12'
+  gerado_em: '2026-10-13'
   fonte_dados: carteira sintética
   tabua: BR-EMSmt-2026
   tabua_sha256: 45a1565083c77042187c1364a58d0f27d90208f140124394d179fb2b8cd70541
   corte_experiencia: '2024-12-31'
-  obitos: 1686
-  esperados_tabua: 1627.39
+  obitos: 2772
+  esperados_tabua: 2664.6
   teste_fora_do_tempo: 2024-01-01 a 2024-12-31
   candidatos_empatados_no_teste:
-  - plano atual (tábua × A/E)
   - GLM
-  - GLMM
   - ridge com priori SOA
   secoes_agrupadas_em_OUTRAS: []
   modelo_escolhido: ridge com priori SOA
   esperados_por_secao:
-    C: 200.353
-    F: 150.967
-    G: 68.125
-    H: 206.777
-    K: 133.304
-    M: 88.255
-    N: 277.093
-    O: 319.655
-    P: 116.85
-    Q: 66.01
-  lambda: 0.242101350423175
+    C: 424.898
+    F: 229.829
+    G: 297.408
+    H: 336.466
+    K: 87.954
+    M: 272.402
+    N: 345.615
+    O: 296.464
+    P: 164.798
+    Q: 208.762
+  lambda: 4.08285567292566
   formula: N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)
   modelo: ridge (glmnet) com priori
   elasticidade_priori: -0.0986460171456716
-  desvio_elasticidade: 0.00063758166339456
-ae_base: 0.8606538883541587
+  desvio_elasticidade: 0.00245412318720112
+ae_base: 1.1457024483983784
 capital:
   referencia: 50000.0
-  elasticidade: -0.09800843548227704
+  elasticidade: -0.09619189395847048
 secao:
-  C: 1.2562195288307294
-  F: 1.4003696081874035
-  G: 1.2194705314336265
-  H: 1.5319803779892376
-  K: 1.0854771581810188
-  M: 0.9545280492746685
-  N: 1.2138052266284305
-  O: 1.0
-  P: 0.9928743311793504
-  Q: 1.0295095664483955
-  A: 1.180300625965116
-  B: 1.5792537590889733
-  J: 1.049294060254936
-  S: 1.1362610631213845
-secao_nao_vista: 1.1676210805403318
+  C: 1.0
+  F: 1.052142798337848
+  G: 0.9120813013875352
+  H: 1.0329322692073906
+  K: 0.7932591361004058
+  M: 0.7311897747714304
+  N: 0.9150065699356607
+  O: 0.9360187871832221
+  P: 0.784286656003993
+  Q: 0.8012824380169523
+  A: 0.9131441457474019
+  B: 1.2217957806999373
+  J: 0.811790409333931
+  S: 0.8790727675685202
+secao_nao_vista: 0.9033345663735769
 divisao: {}
 divisao_nao_vista: 1.0
 fatores_categoricos: {}
