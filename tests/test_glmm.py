@@ -90,3 +90,10 @@ def test_glm_sem_efeitos_aleatorios_usa_stats_glm_com_anova():
     a = r.extra["anova"]
     assert list(a["termo"]) == ["NULL", "log_capital_c", "cnae_secao"]
     assert a["deviance"].iloc[1:].sum() == pytest.approx(r.extra["deviance_nula"] - r.extra["deviance"])
+
+
+def test_fator_de_um_nivel_sai_do_glm():
+    df = _simular().assign(cnae_secao="OUTRAS")
+    with pytest.warns(UserWarning, match="único nível"):
+        r = G.ajustar_glmm(df, ["log_capital_c", "cnae_secao"], [], categoricas=["cnae_secao"], numericas=["log_capital_c"])
+    assert r.convergiu and list(r.fixos["nome"]) == ["(Intercept)", "log_capital_c"]

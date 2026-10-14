@@ -8,8 +8,6 @@ Uso no projeto (SOA, 2024, seção 4.3; CAS Monograph 5, seção 10.5):
 """
 from __future__ import annotations
 
-import json
-import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import RAIZ
+from .r import rodar_spec
 
 
 @dataclass
@@ -57,14 +55,8 @@ def ajustar_elastic_net(treino: pd.DataFrame, prever: dict[str, pd.DataFrame], t
             caminhos[nome] = str(t / f"{nome}.csv")
         spec = {"treino": str(t / "treino.csv"), "prever": caminhos, "termos": termos, "categoricas": categoricas,
                 "numericas": numericas, "offset": offset, "alpha": alpha, "nfolds": nfolds, "foldid": foldid,
-                "lambda": lambda_, "semente": semente, "padronizar": padronizar, "pasta_saida": str(t),
-                "saida": str(t / "saida.json")}
-        (t / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
-        r = subprocess.run(["Rscript", str(RAIZ / "r" / "ajustar_glmnet.R"), str(t / "spec.json")],
-                           capture_output=True, text=True, timeout=timeout)
-        if r.returncode != 0:
-            raise RuntimeError(f"glmnet falhou:\n{r.stderr[-3000:]}")
-        o = json.loads((t / "saida.json").read_text(encoding="utf-8"))
+                "lambda": lambda_, "semente": semente, "padronizar": padronizar, "pasta_saida": str(t)}
+        o = rodar_spec("ajustar_glmnet.R", spec, t, timeout)
         prev = {nome: pd.read_csv(arq)["mu"].to_numpy() for nome, arq in (o.get("previsoes") or {}).items()}
         prev["treino"] = pd.read_csv(t / "prev_treino.csv")["mu"].to_numpy()
     c = o["coeficientes"]

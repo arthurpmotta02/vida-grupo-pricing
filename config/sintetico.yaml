@@ -79,6 +79,9 @@ sujeira:                                 # proporção de registros sujos injeta
   nascimento_ausente: 0.001
   idade_impossivel: 0.002
   sexo_ausente: 0.005
+  # grupos que mandam o censo sem sexo (caso comum na vida real); mais frequente na indústria, construção e
+  # transporte, de maioria masculina: é o caso em que a média 50/50 subestima a mortalidade
+  sexo_ausente_grupos: {fracao: 0.08, secoes: [C, F, H], fator_secoes: 4.0}
   capital_zero: 0.001
   fim_antes_inicio: 0.001
   sinistro_duplicado: 0.02

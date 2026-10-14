@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .exposicao import exposicao_detalhada, idade_completa
+from .exposicao import exposicao_detalhada, idade_completa, proporcao_masculina
 from .glmm import ResultadoGLMM, ajustar_glmm
 from .tabua import Tabua
 
@@ -102,17 +102,20 @@ def base_modelagem(vidas: pd.DataFrame, sinistros: pd.DataFrame, estipulantes: p
     cel = cel.merge(est, on="id_estipulante").merge(
         det[["id_estipulante", "faixa_tamanho"]].drop_duplicates(), on="id_estipulante")
     cel["log_capital_c"] = cel.pop("E_logcap") / cel["E"] - np.log(cfg_manual["capital_referencia"])
-    exp_sec = cel.groupby("cnae_secao")["E"].sum()
-    raras = sorted(exp_sec[exp_sec < cfg_manual["modelo"]["min_esperados_secao"]].index)
+    from .estudo import agrupar_niveis_raros
     cel["cnae_secao_original"] = cel["cnae_secao"]
-    cel.loc[cel["cnae_secao"].isin(raras), "cnae_secao"] = "OUTRAS"
+    cel["cnae_secao"], mapa = agrupar_niveis_raros(cel, "cnae_secao", "E", cfg_manual["modelo"]["min_esperados_secao"],
+                                                   ordenado=False, desconhecidos=(), sempre_outros=True)
+    raras = sorted(k for k, v in mapa.items() if k != v)
+    # sexo ausente fica como nível "ND" (esperado pela mistura com a proporção de homens do perfil); retirar essas
+    # células perderia exposição e distorceria a taxa quando a ausência se concentra em alguns grupos
     n_nd = int((cel["sexo"] == "ND").sum())
-    cel = cel[(cel["sexo"] != "ND") & (cel["E"] > 0)].reset_index(drop=True)
+    cel = cel[cel["E"] > 0].reset_index(drop=True)
     info = {"inicio_experiencia": inicio.date().isoformat() if inicio is not None else None,
             "corte_experiencia": corte.date().isoformat(), "anos_excluidos": list(excluir_anos),
             "sinistros_no_periodo": int(len(s)),
             "sinistros_sem_celula": len(sem_celula), "ids_sem_celula": sem_celula[:50],
-            "celulas_sexo_ND_removidas": n_nd, "celulas": int(len(cel)), "estipulantes": int(cel["id_estipulante"].nunique()),
+            "celulas_sexo_ND": n_nd, "celulas": int(len(cel)), "estipulantes": int(cel["id_estipulante"].nunique()),
             "obitos": int(cel["N"].sum()), "esperados": float(cel["E"].sum()),
             "secoes_agrupadas_em_OUTRAS": raras}
     return cel, info
@@ -261,11 +264,11 @@ def tabela_fatores_ridge(coeficientes: pd.Series, prioris: dict | None, cel: pd.
     }
 
 
-METODOS_TARIFA = ("ridge com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)")
+METODOS_TARIFA = ("ridge com priori SOA", "AGLM com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)")
 
 
 def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: dict | None, meta: dict,
-                   semente: int = 2026) -> dict:
+                   semente: int = 2026, fator_desenvolvimento: float = 1.0) -> dict:
     """Ajusta um dos métodos que podem virar tarifa e devolve a tabela de fatores no formato do cotador.
     Usada no notebook 03b (reajuste final com toda a experiência) e no backtest da renovação (05), para que os
     dois usem exatamente o mesmo método."""
@@ -292,6 +295,26 @@ def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: di
         tab = tabela_fatores_ridge(r.coeficientes, prioris, d, cfg_manual,
                                    {**meta, "lambda": r.lambda_escolhido,
                                     "formula": "N ~ log_capital_c + cnae_secao, offset = log E + priori SOA (ridge)"})
+    elif metodo == "AGLM com priori SOA":
+        from .aglm import codificar, nos_por_quantil
+        from .avaliacao import folds_por_grupo
+        from .elasticnet import ajustar_elastic_net
+        from .prioris import offset_priori
+        d = cel.copy()
+        d["fold"] = folds_por_grupo(d["id_estipulante"], cfg_manual["validacao_cruzada"]["folds"], semente) + 1
+        d["off_priori"] = offset_priori(d, prioris)
+        nos = nos_por_quantil(d["log_capital_c"], 9)
+        ordens = {"faixa_idade": cfg_manual["faixas"]["idade"]["rotulos"], "faixa_tamanho": cfg_manual["faixas"]["tamanho"]["rotulos"]}
+        X = pd.concat([d, codificar(d, {"log_capital_c": nos}, ordens)], axis=1)
+        extra = [c for c in X.columns if c.startswith(("log_capital_c_L", "faixa_idade_O", "faixa_tamanho_O"))]
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Variáveis com um único nível")
+            r = ajustar_elastic_net(X, {}, ["log_capital_c", *extra, "cnae_secao", "sexo"], ["cnae_secao", "sexo"],
+                                    ["log_capital_c", *extra], "off_priori", alpha=1.0, foldid="fold", semente=semente)
+        tab = tabela_fatores_aglm(r.coeficientes, prioris, d, cfg_manual, list(nos), ordens,
+                                  {**meta, "lambda": r.lambda_escolhido,
+                                   "formula": "AGLM: L(log capital) + O(faixa etária, porte) + seção + sexo; offset = log E + priori SOA"})
     elif metodo == "plano atual (tábua × A/E)":
         tab = {"meta": {**meta, "formula": "N = E x A/E da carteira"}, "ae_base": float(cel["N"].sum() / cel["E"].sum()),
                "capital": {"referencia": float(cfg_manual["capital_referencia"]), "elasticidade": 0.0},
@@ -299,9 +322,75 @@ def ajustar_tabela(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: di
                "fatores_categoricos": {}, "faixas": cfg_manual["faixas"]}
     else:
         raise ValueError(f"Método {metodo!r} não pode virar tarifa; opções: {METODOS_TARIFA}")
+    if {"sexo", "faixa_idade", "E"} <= set(cel.columns):
+        tab["proporcao_masculina"] = tabela_proporcao_masculina(cel)
     tab["meta"].setdefault("formula", tab["meta"].get("formula", ""))
     tab["meta"]["modelo_escolhido"] = metodo
+    # IBNR residual da experiência (sinistros ainda não avisados): corrige o nível, não a estrutura
+    tab["ae_base"] = float(tab["ae_base"] * fator_desenvolvimento)
+    tab["meta"]["fator_desenvolvimento_ibnr"] = float(fator_desenvolvimento)
     return tab
+
+
+def tabela_fatores_aglm(coeficientes: pd.Series, prioris: dict | None, cel: pd.DataFrame, cfg_manual: dict,
+                        nos: list[float], ordens: dict[str, list[str]], meta: dict) -> dict:
+    """Tabela de fatores do AGLM com priori: a da ridge (nível, seções, elasticidade) mais o capital linear por
+    partes (variáveis L) e fatores por faixa das ordenadas (variáveis O) e do sexo (incluindo "ND")."""
+    from .aglm import fatores_O
+    b = coeficientes.drop(".nula", errors="ignore")
+    base = b[[k for k in b.index if not k.startswith(("log_capital_c_", *[f"{o}_O" for o in ordens], "sexo"))]]
+    tab = tabela_fatores_ridge(base, prioris, cel, cfg_manual, meta)
+    tab["meta"]["modelo"] = "AGLM (glmnet, LASSO; variáveis L e O)" + (" com priori" if prioris else "")
+    tab["capital"]["termos_L"] = {"nos": [float(x) for x in nos],
+                                  "coef": [float(b.get(f"log_capital_c_L{j}", 0.0)) for j in range(len(nos))]}
+    cat = {o: fatores_O(ordem, b.to_dict(), o) for o, ordem in ordens.items()}
+    sexo = {k[len("sexo"):]: float(np.exp(v)) for k, v in b.items() if k.startswith("sexo")}
+    if sexo:
+        cat["sexo"] = sexo
+    tab["fatores_categoricos"] = cat
+    return tab
+
+
+def tabela_proporcao_masculina(cel: pd.DataFrame) -> dict:
+    """Proporção de homens da carteira por seção CNAE e faixa etária (e só por faixa), pesada pelos esperados, entre
+    as células com sexo conhecido. Vai na tabela de fatores para a cotação e a renovação de grupos sem sexo no censo."""
+    c = cel[cel["sexo"].astype(str).isin(["M", "F"]).to_numpy()].copy()
+    c["m"] = c["E"].to_numpy(float) * (c["sexo"].astype(str) == "M").to_numpy(float)
+    sec = c.groupby(["cnae_secao_original" if "cnae_secao_original" in c else "cnae_secao", "faixa_idade"])[["m", "E"]].sum()
+    fx = c.groupby("faixa_idade")[["m", "E"]].sum()
+    por_secao = {}
+    for (s_, f), r in sec.iterrows():
+        por_secao.setdefault(str(s_), {})[str(f)] = float(r["m"] / r["E"])
+    return {"secao": por_secao, "carteira": {str(f): float(r["m"] / r["E"]) for f, r in fx.iterrows()}}
+
+
+def prop_masculina_censo(v: pd.DataFrame, tabela: dict) -> np.ndarray:
+    """Proporção de homens para as vidas de um censo: primeiro do próprio grupo (faixa de 10 anos, depois o grupo);
+    sem informação no grupo, a da carteira guardada na tabela de fatores (seção e faixa etária, depois a faixa)."""
+    p = proporcao_masculina(v.assign(id_estipulante=v.get("id_estipulante", "G")),
+                            [["id_estipulante", "faixa10"], ["id_estipulante"]], padrao=np.nan)
+    ref = tabela.get("proporcao_masculina")
+    if ref and np.isnan(p).any():
+        faixa = _faixa(v["idade"], tabela["faixas"]["idade"]).astype(str).to_numpy()
+        sec = v["cnae_secao"].astype(str).to_numpy() if "cnae_secao" in v else np.array([""] * len(v))
+        alt = np.array([ref["secao"].get(s_, {}).get(f, ref["carteira"].get(f, np.nan)) for s_, f in zip(sec, faixa)], float)
+        p = np.where(np.isnan(p), alt, p)
+    return np.nan_to_num(p, nan=0.5)
+
+
+def reamostra_fatores(cel: pd.DataFrame, metodo: str, cfg_manual: dict, prioris: dict | None, semente: int) -> dict:
+    """Uma reamostra do bootstrap por estipulante (CAS 6.4): reamostra os grupos com reposição, reajusta a tarifa pelo
+    mesmo método e devolve a elasticidade e os fatores absolutos (nível x seção) de cada seção."""
+    rng = np.random.default_rng(semente)
+    grupos = cel["id_estipulante"].unique()
+    amostra = rng.choice(grupos, len(grupos), replace=True)
+    partes = {g: cel[cel["id_estipulante"] == g] for g in np.unique(amostra)}
+    cb = pd.concat([partes[g].assign(id_estipulante=f"{g}_{k}") for k, g in enumerate(amostra)], ignore_index=True)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Variáveis com um único nível")
+        t = ajustar_tabela(cb, metodo, cfg_manual, prioris, {})
+    return {"elasticidade": t["capital"]["elasticidade"], **{f"seção {k}": t["ae_base"] * v for k, v in t["secao"].items()}}
 
 
 def escolher_modelo(comparacao_vs_melhor: pd.DataFrame, ordem_preferencia: list[str]) -> tuple[str, list[str]]:
@@ -359,10 +448,16 @@ def multiplicador_manual(df: pd.DataFrame, tabela: dict) -> tuple[np.ndarray, li
     mult = (tabela["ae_base"] * f_sec.fillna(tabela["secao_nao_vista"]).to_numpy()
             * f_div.fillna(tabela["divisao_nao_vista"]).to_numpy()
             * (df["capital"].to_numpy(float) / cap["referencia"]) ** cap["elasticidade"])
+    termos_L = cap.get("termos_L")
+    if termos_L:     # AGLM: capital linear por partes no log (mudanças de inclinação nos nós)
+        lc = np.log(df["capital"].to_numpy(float) / cap["referencia"])
+        mult = mult * np.exp(sum(c * np.abs(lc - b) for b, c in zip(termos_L["nos"], termos_L["coef"])))
     fx = tabela["faixas"]
     for fator, mapa in tabela.get("fatores_categoricos", {}).items():
         if fator == "faixa_idade":
-            col = _faixa(df["idade"], fx["idade"])
+            col = df["faixa_idade"].astype(str) if "faixa_idade" in df else _faixa(df["idade"], fx["idade"])
+        elif fator == "sexo" and "sexo" in df.columns:
+            col = df["sexo"].astype("string").where(df["sexo"].astype("string").isin(["M", "F"]), "ND").astype(str)
         elif fator in df.columns:
             col = df[fator].astype(str)
         else:
@@ -385,7 +480,8 @@ def taxa_pura_manual(vidas: pd.DataFrame, cnae_secao: str, cnae_divisao: str | N
     v = vidas.copy()
     data = pd.Timestamp(data_calculo)
     v["idade"] = idade_completa(v["data_nascimento"], pd.Series(data, index=v.index)).astype(int)
-    v["q"] = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy())
+    v["cnae_secao"] = cnae_secao
+    v["q"] = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy(), prop_masculina_censo(v, tabela))
     v["cnae_secao"], v["cnae_divisao"] = cnae_secao, cnae_divisao
     v["faixa_tamanho"] = str(_faixa(pd.Series([len(v)]), tabela["faixas"]["tamanho"]).iloc[0])
     mult, avisos = multiplicador_manual(v, tabela)

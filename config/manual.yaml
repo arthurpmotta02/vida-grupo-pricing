@@ -4,7 +4,7 @@ meses_maturacao: 12        # experiência só até data_referencia - 12 meses (e
 capital_referencia: 50000  # capital em que o fator de capital vale 1
 
 # Anos com choque externo identificado, retirados da experiência da taxa manual (exposição e óbitos).
-# Política, com evidência no notebook 05: na carteira, o A/E de 2021 (pandemia) fica fora do intervalo dos demais
+# Política, com evidência nos notebooks 02 e 04: na carteira, o A/E de 2021 (pandemia) fica fora do intervalo dos demais
 # anos e, se mantido, a taxa manual superestima 2024 em ~11% (contra ~5% sem ele); no SES, a sinistralidade do
 # mercado em 2021 foi de ~76% contra ~46% nos anos normais.
 excluir_anos_experiencia: [2021]
@@ -47,5 +47,6 @@ fora_do_tempo:
 decisao:
   # Só estes podem virar tarifa (cabem na tabela de fatores e na nota técnica). Elastic net com interações e
   # LightGBM entram na comparação como referência de desempenho, como no framework da SOA.
-  ordem_preferencia: ["ridge com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)"]
+  # AGLM vem depois da ridge e do GLM: mais complexo, só é escolhido se for o único melhor (sem empate)
+  ordem_preferencia: ["ridge com priori SOA", "GLM", "AGLM com priori SOA", "GLMM", "plano atual (tábua × A/E)"]
   bootstrap: 2000

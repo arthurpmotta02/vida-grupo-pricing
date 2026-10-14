@@ -16,9 +16,6 @@ grupo novo usa essa correção; sem ela, a taxa manual sairia sistematicamente b
 """
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,17 +23,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import RAIZ
-
-SCRIPT = RAIZ / "r" / "ajustar_glmm.R"
-
-
-def r_disponivel() -> bool:
-    if shutil.which("Rscript") is None:
-        return False
-    teste = subprocess.run(["Rscript", "-e", "suppressMessages({library(glmmTMB);library(glmnet);library(actuar);library(jsonlite)})"],
-                           capture_output=True, text=True)
-    return teste.returncode == 0
+from .r import disponivel as r_disponivel  # noqa: F401  (usado por notebooks e testes)
+from .r import rodar_spec
 
 
 @dataclass
@@ -68,23 +56,23 @@ def ajustar_glmm(cel: pd.DataFrame, fixos: list[str], aleatorios: list[str],
     fixos=["log_capital_c", "cnae_secao"], aleatorios=["(1|id_estipulante)"] (lista vazia = GLM).
     familia: "poisson" ou "nbinom2" (Binomial Negativa). Sem efeitos aleatórios e com Poisson, o motor é o
     glm do R base (o do framework da SOA), e `anova=True` devolve a ANOVA sequencial em `extra["anova"]`."""
-    if not r_disponivel():
-        raise RuntimeError("R com glmmTMB, glmnet, actuar e jsonlite não encontrado. Rode `Rscript r/instalar_pacotes.R`.")
+    # fator com um nível só (ex.: pouca experiência, todas as seções em "OUTRAS"): não há contraste a estimar
+    unicos = [c for c in categoricas if c in fixos and cel[c].nunique() < 2]
+    if unicos:
+        import warnings
+        warnings.warn(f"Variáveis com um único nível, retiradas do modelo: {unicos}")
+        fixos = [f for f in fixos if f not in unicos]
+        testar_fixos = [f for f in (testar_fixos or []) if f not in unicos]
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         cols = sorted(set(["N", "E", *categoricas, *numericas]))
         cel[cols].to_csv(tmp / "celulas.csv", index=False)
-        spec = {"entrada": str(tmp / "celulas.csv"), "saida": str(tmp / "saida.json"),
+        spec = {"entrada": str(tmp / "celulas.csv"),
                 "fixos": list(fixos), "aleatorios": list(aleatorios),
                 "categoricas": list(categoricas), "numericas": list(numericas),
                 "niveis_base": niveis_base or {}, "testar_fixos": list(testar_fixos or []),
                 "testar_aleatorios": list(testar_aleatorios or []), "familia": familia, "anova": anova}
-        (tmp / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
-        r = subprocess.run(["Rscript", str(SCRIPT), str(tmp / "spec.json")], capture_output=True, text=True,
-                           timeout=timeout)
-        if r.returncode != 0:
-            raise RuntimeError(f"Falha no ajuste em R:\n{r.stderr[-3000:]}")
-        out = json.loads((tmp / "saida.json").read_text(encoding="utf-8"))
+        out = rodar_spec("ajustar_glmm.R", spec, tmp, timeout)
     m = out["modelo"]
     _lista = lambda x: x if isinstance(x, list) else [x]
     if m.get("loglik") is None:

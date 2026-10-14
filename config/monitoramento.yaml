@@ -2,7 +2,7 @@
 meses: 24                         # série mensal exibida
 janela_meses: 12                  # A/E da carteira e dos grupos nos últimos 12 meses
 meses_imaturos: 3                 # meses mais recentes fora do A/E móvel: com 3 meses de idade ~68% já estão
-                                  # avisados (padrão de aviso, notebook 04); antes disso o ajuste de IBNR é instável
+                                  # avisados (padrão de aviso, notebook 05); antes disso o ajuste de IBNR é instável
 niveis: [0.95, 0.998]             # limites de controle (funnel plot, Spiegelhalter 2005): alerta e ação
 gatilhos:
   grupos_acima_998_maximo: 0.01   # mais de 1% dos grupos acima do limite de 99,8% (esperado: 0,1%) -> investigar

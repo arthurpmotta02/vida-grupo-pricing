@@ -48,6 +48,32 @@ def anos_apolice(estipulantes: pd.DataFrame, data_referencia) -> pd.DataFrame:
     return pd.DataFrame(linhas, columns=["id_estipulante", "ano_apolice", "inicio_ano", "fim_ano", "ano_completo"])
 
 
+HIERARQUIA_SEXO = [["id_estipulante", "faixa10"], ["id_estipulante"], ["cnae_secao", "faixa10"], ["faixa10"]]
+
+
+def proporcao_masculina(df: pd.DataFrame, niveis: list[list[str]] = HIERARQUIA_SEXO, peso: str | None = None,
+                        padrao: float = 0.5) -> np.ndarray:
+    """Proporção de homens para cada linha, entre as linhas com sexo conhecido, no nível mais fino da hierarquia que
+    tiver dados (padrão: mesmo grupo e faixa de 10 anos, o grupo, a seção CNAE e a faixa, a faixa na carteira).
+    Sem nenhuma informação, 0,5. Usada para o esperado das vidas com sexo ausente."""
+    d = df.copy()
+    if "faixa10" not in d:
+        d["faixa10"] = (d["idade"] // 10).astype(int)
+    sx = d["sexo"].astype("string")
+    d["_w"] = d[peso].astype(float) if peso else 1.0
+    d["_mw"] = (sx == "M").astype(float) * d["_w"]
+    conhecido = d[sx.isin(["M", "F"]).fillna(False).to_numpy()]
+    p = pd.Series(np.nan, index=d.index)
+    for chaves in niveis:
+        chaves = [c for c in chaves if c in d]
+        if not chaves or not p.isna().any():
+            continue
+        g = conhecido.groupby(chaves)[["_mw", "_w"]].sum()
+        taxa = (g["_mw"] / g["_w"]).rename("_p")
+        p = p.fillna(d[chaves].merge(taxa, left_on=chaves, right_index=True, how="left")["_p"])
+    return p.fillna(padrao).to_numpy()
+
+
 def exposicao_detalhada(vidas: pd.DataFrame, estipulantes: pd.DataFrame, tabua: Tabua,
                         data_referencia, dias_por_ano: float = 365.25, data_inicio=None) -> pd.DataFrame:
     """Um registro por pedaço (segmento ∩ ano-apólice) com exposição e esperados. `data_inicio` (opcional)
@@ -66,13 +92,19 @@ def exposicao_detalhada(vidas: pd.DataFrame, estipulantes: pd.DataFrame, tabua: 
     m["dias"] = (m["fim"] - m["ini"]).dt.days + 1
     m["exposicao"] = m["dias"] / dias_por_ano
     m["idade"] = idade_completa(m["data_nascimento"], m["ini"]).astype(int)
-    m["qx"] = tabua.q(m["idade"].to_numpy(), m["sexo"].astype(object).to_numpy())
+    m["sexo_informado"] = m["sexo"].astype("string").isin(["M", "F"]).fillna(False).to_numpy()
+    p_masc = None
+    if not m["sexo_informado"].all():
+        aux = m[["id_estipulante", "idade", "sexo", "exposicao"]].merge(
+            estipulantes[["id_estipulante", "cnae_secao"]], on="id_estipulante", how="left")   # mantém a ordem
+        p_masc = proporcao_masculina(aux, peso="exposicao")
+    m["qx"] = tabua.q(m["idade"].to_numpy(), m["sexo"].astype(object).to_numpy(), p_masc)
     m["obitos_esperados"] = m["qx"] * m["exposicao"]
     m["capital_ano"] = m["capital"] * m["exposicao"]
     m["valor_esperado"] = m["qx"] * m["capital_ano"]
     m["soma_c2q"] = m["capital"] ** 2 * m["obitos_esperados"]
     cols = ["id_linha", "id_estipulante", "id_vida", "ano_apolice", "inicio_ano", "fim_ano", "ano_completo",
-            "ini", "fim", "dias", "exposicao", "idade", "sexo", "capital", "qx",
+            "ini", "fim", "dias", "exposicao", "idade", "sexo", "sexo_informado", "capital", "qx",
             "obitos_esperados", "capital_ano", "valor_esperado", "soma_c2q"]
     return m[[c for c in cols if c in m.columns]].reset_index(drop=True)
 

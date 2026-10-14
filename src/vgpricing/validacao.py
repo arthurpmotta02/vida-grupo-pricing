@@ -59,6 +59,21 @@ class _Log:
         return pd.concat(self.linhas, ignore_index=True)
 
 
+def imputar_nascimento(v: pd.DataFrame) -> pd.DataFrame:
+    """Nascimento ausente: data de início menos a idade de entrada mediana das vidas com nascimento conhecido do mesmo
+    grupo (ou da carteira). Marca `nascimento_imputado`. Excluir a vida perderia exposição e enviesaria o A/E."""
+    v = v.copy()
+    aus = v["data_nascimento"].isna()
+    v["nascimento_imputado"] = aus
+    if not aus.any():
+        return v
+    idade = (v["data_inicio"] - v["data_nascimento"]).dt.days / 365.25
+    med_grupo = idade.groupby(v["id_estipulante"]).transform("median")
+    anos = med_grupo.fillna(idade.median()).fillna(40.0)
+    v.loc[aus, "data_nascimento"] = v.loc[aus, "data_inicio"] - pd.to_timedelta(np.round(anos[aus] * 365.25), unit="D")
+    return v
+
+
 def _aplicar(df, mask, log, codigo, tabela, descricao, severidade, acao, detalhe=None):
     log.add(df, mask, codigo, tabela, descricao, severidade, acao, detalhe)
     if acao == "excluir":
@@ -89,14 +104,18 @@ def validar_vidas(v: pd.DataFrame, estip: pd.DataFrame, cfg: dict, data_ref: pd.
                  "linha duplicada", "media", "excluir")
     v = _aplicar(v, ~v["id_estipulante"].isin(estip["id_estipulante"]), log, "V02", t,
                  "estipulante inexistente", "alta", "excluir")
-    v = _aplicar(v, v["data_nascimento"].isna() | (v["data_nascimento"] > v["data_inicio"]), log, "V03", t,
-                 "nascimento ausente ou posterior ao início", "alta", "excluir")
+    v = _aplicar(v, v["data_nascimento"] > v["data_inicio"], log, "V15", t,
+                 "nascimento posterior ao início da cobertura", "alta", "excluir")
+    ausente = v["data_nascimento"].isna()
+    v = _aplicar(v, ausente, log, "V03", t,
+                 "nascimento ausente (imputado: início menos a idade de entrada mediana do grupo)", "media", "imputar")
+    v = imputar_nascimento(v)
     idade_ent = idade_completa(v["data_nascimento"], v["data_inicio"])
     imposs = (idade_ent < c["idade_minima_possivel"]) | (idade_ent > c["idade_maxima_possivel"])
     v = _aplicar(v, imposs, log, "V04", t, "idade de entrada impossível", "alta", "excluir",
                  detalhe="idade=" + idade_ent.astype("string"))
     v = _aplicar(v, ~v["sexo"].isin(VALORES_SEXO), log, "V05", t,
-                 "sexo ausente/inválido (usa média M/F da tábua)", "media", "sinalizar")
+                 "sexo ausente/inválido (esperado pela proporção de homens do perfil)", "media", "sinalizar")
     v = _aplicar(v, v["capital"].isna() | (v["capital"] <= 0), log, "V06", t,
                  "capital ausente ou não positivo", "alta", "excluir")
     v = _aplicar(v, v["data_fim"].notna() & (v["data_fim"] < v["data_inicio"]), log, "V07", t,

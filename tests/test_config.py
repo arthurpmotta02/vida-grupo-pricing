@@ -25,4 +25,4 @@ def test_blocos_de_modelagem():
         assert {"parametros", "rodadas_max", "parada_antecipada", "folds", "semente", "bootstrap"} <= set(c[b])
         assert c[b]["parametros"]["objective"] == "poisson"
     assert set(carregar_config("manual")["decisao"]["ordem_preferencia"]) <= {
-        "ridge com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)"}
+        "ridge com priori SOA", "AGLM com priori SOA", "GLMM", "GLM", "plano atual (tábua × A/E)"}

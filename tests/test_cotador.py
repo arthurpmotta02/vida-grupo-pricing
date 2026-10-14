@@ -42,3 +42,16 @@ def test_alertas_de_concentracao_e_porte():
     censo = pd.DataFrame({"data_nascimento": [T("1940-01-01")] + [T("1990-01-01")] * 4, "capital": [1e6] + [1e4] * 4})
     a = alertas(censo, "2026-01-01", cfg).set_index("alerta")["disparou"]
     assert a["concentração: maior capital"] and a["idade acima do limite de aceitação"] and a["grupo abaixo do mínimo de vidas"]
+
+
+def test_historico_do_grupo_entra_com_credibilidade(tabua_constante):
+    cc, cr = carregar_config("cotador"), carregar_config("renovacao")
+    censo = pd.DataFrame({"data_nascimento": [T("1980-01-01")] * 200, "sexo": "M", "capital": [50000.0] * 200})
+    base = cotar(censo, "N", "81", _tabela(), tabua_constante, "2026-01-01", cc, cr)
+    hist = pd.DataFrame({"ano": [2023, 2024, 2025], "sinistros": [2 * base["custo_esperado_limitado"]] * 3})
+    pouca = cotar(censo, "N", "81", _tabela(), tabua_constante, "2026-01-01", cc, cr, hist, k_credibilidade=1e6)
+    muita = cotar(censo, "N", "81", _tabela(), tabua_constante, "2026-01-01", cc, cr, hist, k_credibilidade=1e-6)
+    assert pouca["premio_puro_anual"] == pytest.approx(base["premio_puro_anual"], rel=1e-3)   # k enorme: Z ~ 0
+    assert muita["experiencia"]["A/E historico"] == pytest.approx(2.0)
+    assert muita["premio_puro_anual"] == pytest.approx(2 * base["premio_puro_anual"], rel=1e-3)  # Z ~ 1
+    assert 0 < cotar(censo, "N", "81", _tabela(), tabua_constante, "2026-01-01", cc, cr, hist, k_credibilidade=0.5)["experiencia"]["Z"] < 1

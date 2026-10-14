@@ -106,3 +106,24 @@ def test_credibilidade_mercado_favorece_credibilidade_com_unidades_pequenas():
             linhas.append({"unidade": f"U{u}", "ano": ano, "w": w, "x": th + rng.normal(0, 0.3 / np.sqrt(w))})
     r = credibilidade_mercado(pd.DataFrame(linhas), list(range(2019, 2024)), janela=4, n_boot=300)["resumo"].set_index("metodo")
     assert r.loc["Bühlmann-Straub", "erro quadrático ponderado"] < r.loc["experiência própria", "erro quadrático ponderado"]
+
+
+def test_fator_desenvolvimento_completa_o_ibnr():
+    from vgpricing.ibnr import fator_desenvolvimento
+    rng = np.random.default_rng(0)
+    oc = T("2021-01-01") + pd.to_timedelta(rng.integers(0, 1460, 6000), unit="D")
+    s = pd.DataFrame({"data_ocorrencia": oc,
+                      "data_aviso": oc + pd.to_timedelta(np.round(np.exp(rng.normal(np.log(45), 1.0, 6000))), unit="D")})
+    aval, fim = T("2024-12-31"), T("2023-12-31")                       # 12 meses de maturação
+    verdade = (s["data_ocorrencia"] <= fim).sum() / ((s["data_ocorrencia"] <= fim) & (s["data_aviso"] <= aval)).sum()
+    assert fator_desenvolvimento(s, aval, fim) == pytest.approx(verdade, abs=0.004)
+    assert 1.0 < verdade < 1.02
+
+
+@requer_r
+@pytest.mark.parametrize("d", [pd.DataFrame({"g": [], "p": [], "x": [], "w": []}),
+                               pd.DataFrame({"g": ["A", "B"], "p": [1, 1], "x": [0.9, 1.1], "w": [2.0, 3.0]})])
+def test_buhlmann_straub_sem_experiencia_suficiente_da_z_zero(d):
+    with pytest.warns(UserWarning, match="insuficiente"):
+        r = R.buhlmann_straub(d, "g", "p", "x", "w")
+    assert np.isinf(r["k"]) and (r["por_grupo"]["Z"] == 0).all()

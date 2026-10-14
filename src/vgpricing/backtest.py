@@ -14,10 +14,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .avaliacao import deviance_por_unidade, diferenca_deviance
+from .avaliacao import comparar_modelos, deviance_por_unidade
 from .exposicao import anos_apolice
 from .renovacao import (buhlmann_straub, experiencia_renovacao, fatores_experiencia, niveis_pooling,
-                        padroes_e_apriori)
+                        padroes_e_apriori, sem_anos_excluidos)
 from .tabua import Tabua
 
 METODOS = {"manual": "Só taxa manual (Z = 0)", "mercado": "Credibilidade de mercado (raiz, vidas-ano)",
@@ -51,7 +51,8 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
     pn0, pv0, _ = padroes_e_apriori(s, P0, None, d0)
     xp0 = experiencia_renovacao(v, s, e, tabua, tabela_manual, d0, P0, pn0, pv0, (1.0, 1.0))
     xp0["AE_v"] = np.where(xp0["V_manual"] > 0, xp0["A_v"] / xp0["V_manual"], np.nan)
-    bs = buhlmann_straub(xp0, "id_estipulante", "ano_apolice", "AE_v", "n_ef")
+    exc = cfg_renov.get("excluir_anos_experiencia", ())
+    bs = buhlmann_straub(sem_anos_excluidos(xp0, exc), "id_estipulante", "ano_apolice", "AE_v", "n_ef")
 
     historicos, pools = [], []
     for d, grupo in alvo.groupby("inicio_ano"):
@@ -66,7 +67,8 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
         pools.append(P)
     hist = pd.concat(historicos, ignore_index=True)
     P_alvo = pd.concat(pools)
-    fat = fatores_experiencia(hist, cfg_renov["credibilidade"], k_bs=bs["k"], anos_max=cfg_renov["anos_experiencia_max"])
+    fat = fatores_experiencia(hist, cfg_renov["credibilidade"], k_bs=bs["k"], anos_max=cfg_renov["anos_experiencia_max"],
+                              excluir_anos=exc)
 
     # o que aconteceu no ano-alvo (avaliado na data de referência, com o pooling da data de renovação)
     pn_r, pv_r, _ = padroes_e_apriori(s, P_alvo, None, ref)
@@ -77,32 +79,24 @@ def executar(dados: dict, tabua: Tabua, tabela_manual: dict, cfg_renov: dict, da
     real = real.merge(pr[["id_estipulante", "premio_emitido"]], on="id_estipulante", how="left")
     res = real.merge(fat, on="id_estipulante", suffixes=("", "_hist"))
 
+    return {**_avaliar(res, cfg_renov), "por_grupo": res, "bs": bs, "alvo": alvo, "data_k": d0, "pooling_alvo": P_alvo}
+
+
+def _avaliar(res: pd.DataFrame, cfg_renov: dict) -> dict:
+    """Métricas de cada método e diferença de deviance contra "só taxa manual", com IC por bootstrap pareado sobre
+    os anos-alvo (implementação única em `avaliacao.comparar_modelos`)."""
     c = cfg_renov["reajuste"]["carregamento_total"]
-    linhas, devs = [], {}
+    d, linhas = res.copy(), []
     for m, nome in METODOS.items():
         prev_lim = res["V_manual"] * res[f"fator_{m}"]
-        prev_n = res["E_manual"] * res[f"fator_{m}"]
-        premio = (prev_lim + res["V_excesso"]) / (1 - c)
-        devs[nome] = deviance_por_unidade(res["N"], prev_n)
-        linhas.append(_metricas(nome, res, prev_lim, prev_n, premio))
+        d[f"pred_{m}"] = res["E_manual"] * res[f"fator_{m}"]
+        linhas.append(_metricas(nome, res, prev_lim, d[f"pred_{m}"], (prev_lim + res["V_excesso"]) / (1 - c)))
     if res["premio_emitido"].notna().all():
         linhas.append(_metricas("Regra contratual 75/85% (prêmio efetivamente cobrado)", res, None, None,
                                 res["premio_emitido"]))
-    resumo = pd.DataFrame(linhas)
-    comp = comparar_com_referencia(devs, METODOS["manual"], semente=cfg_renov["backtest"].get("semente", 2026))
-    return {"resumo": resumo, "comparacao_deviance": comp, "por_grupo": res, "bs": bs, "alvo": alvo, "data_k": d0,
-            "pooling_alvo": P_alvo}
-
-
-def comparar_com_referencia(devs: dict, referencia: str, n_boot: int = 2000, semente: int = 2026) -> pd.DataFrame:
-    """Diferença de deviance (método - referência) com IC de 95% por bootstrap pareado por grupo
-    (implementação única em `avaliacao.diferenca_deviance`). Diferença negativa = método melhor."""
-    linhas = []
-    for nome, d in devs.items():
-        r = diferenca_deviance(d, devs[referencia], n_boot, semente)
-        linhas.append({"método": nome, "deviance": float(d.sum()), "diferença vs só manual": r["diferenca"],
-                       "IC95 inf": r["ic95_inf"], "IC95 sup": r["ic95_sup"]})
-    return pd.DataFrame(linhas)
+    comp = comparar_modelos(d, {nome: f"pred_{m}" for m, nome in METODOS.items()}, METODOS["manual"],
+                            semente=cfg_renov["backtest"].get("semente", 2026))
+    return {"resumo": pd.DataFrame(linhas), "comparacao_deviance": comp}
 
 
 def _metricas(nome, res, prev_lim, prev_n, premio) -> dict:
@@ -130,17 +124,7 @@ def executar_varios_anos(dados: dict, tabua: Tabua, ajustar_tabela_ate, cfg_reno
         partes.append(r["por_grupo"].assign(ano_alvo=ano))
         ks[ano] = r["bs"]["k"]
     res = pd.concat(partes, ignore_index=True)
-    c = cfg_renov["reajuste"]["carregamento_total"]
-    linhas, devs = [], {}
-    for m, nome in METODOS.items():
-        prev_lim, prev_n = res["V_manual"] * res[f"fator_{m}"], res["E_manual"] * res[f"fator_{m}"]
-        devs[nome] = deviance_por_unidade(res["N"], prev_n)
-        linhas.append(_metricas(nome, res, prev_lim, prev_n, (prev_lim + res["V_excesso"]) / (1 - c)))
-    if res["premio_emitido"].notna().all():
-        linhas.append(_metricas("Regra contratual 75/85% (prêmio efetivamente cobrado)", res, None, None,
-                                res["premio_emitido"]))
-    comp = comparar_com_referencia(devs, METODOS["manual"], semente=cfg_renov["backtest"].get("semente", 2026))
-    return {"resumo": pd.DataFrame(linhas), "comparacao_deviance": comp, "por_grupo": res, "k_por_ano": ks}
+    return {**_avaliar(res, cfg_renov), "por_grupo": res, "k_por_ano": ks}
 
 
 def credibilidade_mercado(anual: pd.DataFrame, alvos: list[int], janela: int, anos_excluidos_historico: tuple = (),
@@ -184,3 +168,21 @@ def credibilidade_mercado(anual: pd.DataFrame, alvos: list[int], janela: int, an
         resumo.loc[m, "dif. vs experiência própria"] = dif.sum()
         resumo.loc[m, "IC95 inf"], resumo.loc[m, "IC95 sup"] = np.percentile(boot, [2.5, 97.5])
     return {"resumo": resumo.reset_index(), "detalhe": d}
+
+
+def tabela_ate(dados: dict, tabua: Tabua, data, metodo: str, cfg_manual: dict, prioris: dict | None,
+               excluir_anos: tuple = ()) -> dict:
+    """Taxa manual como seria estimada numa data: experiência até `data` e só os sinistros avisados até a renovação
+    (`data` + maturação), com o IBNR residual completado pelo chain ladder daquela data. Usada no backtest."""
+    import warnings
+
+    from .ibnr import fator_desenvolvimento
+    from .manual import ajustar_tabela, base_modelagem
+    aval = pd.Timestamp(data) + pd.DateOffset(months=cfg_manual["meses_maturacao"])
+    sin = dados["sinistros"][dados["sinistros"]["data_aviso"] <= aval]
+    c, i = base_modelagem(dados["vidas"], sin, dados["estipulantes"], tabua, aval, cfg_manual, janela=(None, data),
+                          excluir_anos=excluir_anos)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Variáveis com um único nível")   # anos com pouca experiência
+        return ajustar_tabela(c, metodo, cfg_manual, prioris, i,
+                              fator_desenvolvimento=fator_desenvolvimento(sin, aval, data, excluir_anos=excluir_anos))

@@ -56,3 +56,10 @@ def test_tabela_am_marca_desvios():
     t = A.tabela_am(d, "g", "m").set_index("g")
     assert t.loc["a", "A/M"] == pytest.approx(1.0) and not t.loc["a", "IC exclui 100%"]
     assert t.loc["b", "fora de ±10%"] and t.loc["b", "IC exclui 100%"]
+
+
+def test_sinistralidade_por_faixa_sobe_quando_o_premio_ignora_o_risco():
+    d = _dados()
+    d["premio"] = d["E"]                                                # prêmio só pela tábua
+    g = A.sinistralidade_por_faixa(d, "verdade", "premio", "N")
+    assert g["sinistralidade observada"].iloc[-1] > 1.5 * g["sinistralidade observada"].iloc[0]

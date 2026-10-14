@@ -47,14 +47,16 @@ class Tabua:
     def idade_max(self) -> int:
         return int(self.qx.index.max())
 
-    def q(self, idade, sexo) -> np.ndarray:
-        """q_x anual vetorizado. Sexo fora de {M, F} usa a média simples M/F
-        (convenção explícita; o registro já foi sinalizado na validação)."""
+    def q(self, idade, sexo, prop_masculina=None) -> np.ndarray:
+        """q_x anual vetorizado. Sexo fora de {M, F} usa a mistura p q_M + (1 - p) q_F, com p = proporção de homens
+        do perfil (`prop_masculina`, escalar ou vetor; padrão 0,5). É exata para o número esperado de óbitos, que é
+        linear em p."""
         idade = np.clip(np.asarray(idade, dtype=int), self.qx.index.min(), self.idade_max)
         sexo = pd.Series(np.asarray(sexo, dtype=object)).astype("string").fillna("").to_numpy(dtype=object)
         qm = self.qx["M"].to_numpy()[idade - self.qx.index.min()]
         qf = self.qx["F"].to_numpy()[idade - self.qx.index.min()]
-        return np.where(sexo == "M", qm, np.where(sexo == "F", qf, 0.5 * (qm + qf)))
+        p = 0.5 if prop_masculina is None else np.asarray(prop_masculina, dtype=float)
+        return np.where(sexo == "M", qm, np.where(sexo == "F", qf, p * qm + (1 - p) * qf))
 
 
 # --------------------------------------------------------------------- utilidades

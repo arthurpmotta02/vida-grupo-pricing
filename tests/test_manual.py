@@ -180,3 +180,20 @@ def test_exclusao_de_anos_respeita_o_inicio_da_janela(tabua_constante, cm):
     antes, _ = M.base_modelagem(vidas, sin, est, tabua_constante, "2024-12-31", cm, janela=(None, "2020-06-30"),
                                 excluir_anos=(2021,))
     assert antes["exposicao"].sum() == pytest.approx(182 / 365.25)
+
+
+def test_tabela_aglm_reproduz_a_previsao(cm):
+    nos = [-1.0, 0.0, 1.0]
+    b = pd.Series({"(Intercept)": np.log(0.9), "log_capital_c": 0.02, "log_capital_c_L1": 0.05, "cnae_secaoC": 0.1,
+                   "faixa_idade_O3": 0.2, "sexoM": 0.1, "sexoND": 0.3})
+    pri = {"elasticidade_capital": -0.1, "fator_secao": {"C": 1.2}}
+    ordens = {"faixa_idade": cm["faixas"]["idade"]["rotulos"]}
+    cel = pd.DataFrame({"cnae_secao": ["C"], "E": [10.0]})
+    tab = M.tabela_fatores_aglm(b, pri, cel, cm, nos, ordens, {})
+    df = pd.DataFrame({"capital": [150000.0], "cnae_secao": ["C"], "cnae_divisao": ["x"], "idade": [35], "sexo": [None]})
+    mult, avisos = M.multiplicador_manual(df, tab)
+    lc = np.log(150000 / cm["capital_referencia"])
+    nivel = cm["faixas"]["idade"]["rotulos"].index("30-39")
+    o = 0.2 if nivel < 3 else 0.0
+    esperado = np.exp(np.log(0.9) + (-0.1 + 0.02) * lc + 0.05 * abs(lc - 0.0) + np.log(1.2) + 0.1 + o + 0.3)
+    assert mult[0] == pytest.approx(esperado) and all("divis" in a for a in avisos)

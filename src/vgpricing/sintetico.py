@@ -311,6 +311,14 @@ def injetar_sujeira(dados: dict[str, pd.DataFrame], cfg: dict) -> tuple[dict[str
     verdade += [("vidas", "V04", v.at[i, "id_linha"]) for i in idx]
     idx = pegar(sj["sexo_ausente"]);         v.loc[idx, "sexo"] = pd.NA
     verdade += [("vidas", "V05", v.at[i, "id_linha"]) for i in idx]
+    sg = sj.get("sexo_ausente_grupos")
+    if sg:
+        est = dados["estipulantes"].set_index("id_estipulante")["cnae_secao"]
+        prob = np.where(est.isin(sg["secoes"]), sg["fracao"] * sg["fator_secoes"], sg["fracao"])
+        sem_sexo = est.index[rng.random(len(est)) < np.minimum(prob, 1)]
+        idx = v.index[v["id_estipulante"].isin(sem_sexo) & v["sexo"].notna()]
+        v.loc[idx, "sexo"] = pd.NA
+        verdade += [("vidas", "V05", v.at[i, "id_linha"]) for i in idx]
     idx = pegar(sj["capital_zero"]);         v.loc[idx, "capital"] = 0.0
     verdade += [("vidas", "V06", v.at[i, "id_linha"]) for i in idx]
     idx = pegar(sj["fim_antes_inicio"], lambda d: d["data_fim"].notna())

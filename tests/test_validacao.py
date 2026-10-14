@@ -129,3 +129,13 @@ def test_p01_conciliacao(cfg_base):
     r = validar(d, cfg_base)
     p01 = r.excecoes[r.excecoes["codigo"] == "P01"]
     assert p01["id_linha"].tolist() == [3]
+
+
+def test_nascimento_ausente_e_imputado_pela_mediana_do_grupo():
+    from vgpricing.validacao import imputar_nascimento
+    v = pd.DataFrame({"id_estipulante": ["A", "A", "A"], "data_inicio": pd.to_datetime(["2020-01-01"] * 3),
+                      "data_nascimento": pd.to_datetime(["1980-01-01", "1990-01-01", None])})
+    r = imputar_nascimento(v)
+    assert r["nascimento_imputado"].tolist() == [False, False, True]
+    idade = (r.loc[2, "data_inicio"] - r.loc[2, "data_nascimento"]).days / 365.25
+    assert idade == pytest.approx(35.0, abs=0.01)                       # mediana de 40 e 30 anos

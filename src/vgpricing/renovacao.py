@@ -19,7 +19,7 @@ import pandas as pd
 
 from .exposicao import exposicao_detalhada, idade_completa
 from .ibnr import ibnr_por_periodo, padrao_aviso
-from .manual import multiplicador_manual
+from .manual import multiplicador_manual, prop_masculina_censo
 from .tabua import Tabua
 
 
@@ -114,20 +114,28 @@ def buhlmann_straub(df: pd.DataFrame, grupo: str, periodo: str, x: str, w: str) 
     Devolve s2 (variância dentro), a (variância entre grupos), k = s2/a e, por grupo, peso total,
     média ponderada e Z = w / (w + k). Com a <= 0 (sem heterogeneidade detectável), Z = 0."""
     import json
-    import subprocess
     import tempfile
     from pathlib import Path
 
-    from .config import RAIZ
+    from .r import rodar
     d = df[[grupo, periodo, x, w]].dropna()
     d = d[d[w] > 0].rename(columns={grupo: "grupo", periodo: "periodo", x: "x", w: "w"})
+    periodos = d.groupby("grupo")["periodo"].nunique()
+    if len(periodos) < 2 or (periodos >= 2).sum() == 0:
+        # sem 2 grupos, ou sem nenhum grupo com 2 períodos, s2 e a não são estimáveis: sem credibilidade (Z = 0)
+        import warnings
+        warnings.warn("Experiência insuficiente para estimar Bühlmann-Straub (menos de 2 grupos ou nenhum grupo com 2 "
+                      "períodos): credibilidade zero, a renovação fica na taxa manual.")
+        g = d.groupby("grupo")
+        por = pd.DataFrame({"Z": 0.0, "media": g.apply(lambda t: np.average(t["x"], weights=t["w"]), include_groups=False)
+                            if len(d) else pd.Series(dtype=float), "peso": g["w"].sum(), "periodos": g.size()})
+        por.index.name = grupo
+        media = float(np.average(d["x"], weights=d["w"])) if len(d) else 1.0
+        return {"s2": np.nan, "a": np.nan, "k": np.inf, "media_carteira": media, "grupos": len(por), "por_grupo": por}
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         d.to_csv(t / "e.csv", index=False)
-        r = subprocess.run(["Rscript", str(RAIZ / "r" / "buhlmann_straub.R"), str(t / "e.csv"), str(t / "s.json")],
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"actuar::cm falhou:\n{r.stderr[-2000:]}")
+        rodar("buhlmann_straub.R", t / "e.csv", t / "s.json")
         o = json.loads((t / "s.json").read_text())
     grupos = [str(g) for g in (o["grupos"] if isinstance(o["grupos"], list) else [o["grupos"]])]
     lst = lambda v: v if isinstance(v, list) else [v]
@@ -140,11 +148,24 @@ def buhlmann_straub(df: pd.DataFrame, grupo: str, periodo: str, x: str, w: str) 
             "grupos": len(grupos), "por_grupo": por}
 
 
+def sem_anos_excluidos(xp: pd.DataFrame, anos=()) -> pd.DataFrame:
+    """Retira da experiência os anos-apólice que atravessam algum ano-calendário excluído (choque externo, como a
+    pandemia): a mesma política da taxa manual, para que a renovação não reajuste um grupo por um choque que a
+    tarifa trata como externo."""
+    if not anos:
+        return xp
+    toca = np.zeros(len(xp), bool)
+    for a in anos:
+        toca |= (xp["inicio_ano"] <= pd.Timestamp(f"{a}-12-31")).to_numpy() & (xp["fim_ano"] >= pd.Timestamp(f"{a}-01-01")).to_numpy()
+    return xp[~toca]
+
+
 def fatores_experiencia(xp: pd.DataFrame, cfg_cred: dict, k_bs: float | None = None,
-                        anos_max: int = 5) -> pd.DataFrame:
+                        anos_max: int = 5, excluir_anos=()) -> pd.DataFrame:
     """Fator de experiência por grupo com cada método de credibilidade, usando até `anos_max`
-    anos-apólice mais recentes de cada grupo."""
-    x = xp.sort_values(["id_estipulante", "ano_apolice"]).groupby("id_estipulante").tail(anos_max)
+    anos-apólice mais recentes de cada grupo, sem os anos-apólice que atravessam anos excluídos."""
+    x = sem_anos_excluidos(xp, excluir_anos)
+    x = x.sort_values(["id_estipulante", "ano_apolice"]).groupby("id_estipulante").tail(anos_max)
     g = x.groupby("id_estipulante").agg(vidas_ano=("vidas_ano", "sum"), E_manual=("E_manual", "sum"),
                                          V_manual=("V_manual", "sum"), n_ef=("n_ef", "sum"),
                                          A_v=("A_v", "sum"), A_n=("A_n", "sum"))
@@ -168,14 +189,18 @@ def custo_manual_censo(vidas_ativas: pd.DataFrame, estipulantes: pd.DataFrame, t
     v = vidas_ativas.merge(estipulantes[["id_estipulante", "cnae_secao", "cnae_divisao"]], on="id_estipulante")
     d = pd.Timestamp(data_renovacao)
     v["idade"] = idade_completa(v["data_nascimento"], pd.Series(d, index=v.index)).astype(int)
-    q = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy())
+    q = tabua.q(v["idade"].to_numpy(), v["sexo"].astype(object).to_numpy(), prop_masculina_censo(v, tabela_manual))
     mult, _ = multiplicador_manual(v, tabela_manual)
     P = v["id_estipulante"].map(nivel_pooling).fillna(np.inf).to_numpy()
     C = v["capital"].to_numpy(float)
     v["custo_lim"] = q * mult * np.minimum(C, P)
     v["encargo_pool"] = q * mult * np.maximum(C - P, 0.0)
-    return v.groupby("id_estipulante").agg(vidas=("id_vida", "count"), capital=("capital", "sum"),
-                                           custo_manual_lim=("custo_lim", "sum"), encargo_pooling=("encargo_pool", "sum"))
+    v["c2q"] = q * mult * np.minimum(C, P) ** 2
+    g = v.groupby("id_estipulante").agg(vidas=("id_vida", "count"), capital=("capital", "sum"),
+                                        custo_manual_lim=("custo_lim", "sum"), encargo_pooling=("encargo_pool", "sum"),
+                                        c2q=("c2q", "sum"))
+    g["n_ef"] = g["custo_manual_lim"] ** 2 / g["c2q"]       # número efetivo de óbitos por ano (valor limitado)
+    return g.drop(columns="c2q")
 
 
 def reajuste_tecnico(custo: pd.DataFrame, fatores: pd.DataFrame, coluna_fator: str, taxa_vigente_mensal: pd.Series,
@@ -221,8 +246,9 @@ def renovar_carteira(dados: dict, tabua: Tabua, tabela_manual: dict, cfg: dict, 
     ae = ae_apriori_carteira(xp, aval)
     xp = experiencia_renovacao(v, s, e, tabua, tabela_manual, aval, P, pn, pv, ae)
     xp["AE_v"] = np.where(xp["V_manual"] > 0, xp["A_v"] / xp["V_manual"], np.nan)
-    bs = buhlmann_straub(xp, "id_estipulante", "ano_apolice", "AE_v", "n_ef")
-    fat = fatores_experiencia(xp, cfg["credibilidade"], bs["k"], cfg["anos_experiencia_max"])
+    exc = cfg.get("excluir_anos_experiencia", ())
+    bs = buhlmann_straub(sem_anos_excluidos(xp, exc), "id_estipulante", "ano_apolice", "AE_v", "n_ef")
+    fat = fatores_experiencia(xp, cfg["credibilidade"], bs["k"], cfg["anos_experiencia_max"], exc)
     ativas = v[(v["data_inicio"] <= aval) & (v["data_fim"].isna() | (v["data_fim"] >= aval))]
     custo = custo_manual_censo(ativas, e, tabua, tabela_manual, P, aval + pd.Timedelta(days=1))
     col = {"bs": "fator_bs", "mercado": "fator_mercado"}[cfg["credibilidade"]["metodo"]]

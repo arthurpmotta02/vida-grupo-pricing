@@ -74,3 +74,21 @@ def ibnr_por_periodo(periodos: pd.DataFrame, data_avaliacao, padrao: pd.DataFram
     m = pd.DataFrame(meses, columns=["idx", "dias", "idade", "apriori_dia"])
     m["ibnr"] = m["apriori_dia"] * m["dias"] * fracao_nao_avisada(m["idade"].to_numpy(), padrao)
     return m.groupby("idx")["ibnr"].sum().reindex(periodos.index).fillna(0.0)
+
+
+def fator_desenvolvimento(sinistros: pd.DataFrame, data_avaliacao, fim, inicio=None, excluir_anos=()) -> float:
+    """Óbitos finais estimados / óbitos avisados para as ocorrências entre `inicio` e `fim`, avaliadas em
+    `data_avaliacao` (chain ladder mensal). Completa o IBNR residual da experiência usada na taxa manual: mesmo após
+    a maturação, uma fração pequena dos sinistros mais recentes ainda não foi avisada."""
+    aval = pd.Timestamp(data_avaliacao)
+    s = sinistros[(sinistros["data_aviso"] <= aval) & (sinistros["data_ocorrencia"] <= pd.Timestamp(fim))]
+    if inicio is not None:
+        s = s[s["data_ocorrencia"] >= pd.Timestamp(inicio)]
+    s = s[~s["data_ocorrencia"].dt.year.isin(list(excluir_anos))]
+    if s.empty:
+        return 1.0
+    pad = padrao_aviso(sinistros, aval)
+    m = s["data_ocorrencia"].dt.to_period("M")
+    idade = ((aval.year - m.dt.year) * 12 + aval.month - m.dt.month + 1).to_numpy()
+    # cada sinistro avisado com idade a representa 1/p(a) sinistros finais: fator = média de 1/p
+    return float((1.0 / (1.0 - fracao_nao_avisada(idade, pad))).mean())

@@ -1,6 +1,10 @@
 """Cotação de grupo novo: do censo de vidas à taxa comercial, com alertas de subscrição.
 
-taxa pura = [custo esperado na taxa manual, limitado ao pooling + encargo de pooling] / capital
+taxa pura = [custo esperado na taxa manual, limitado ao pooling x fator de experiência + encargo de pooling] / capital
+
+Na subscrição, além do censo, a seguradora costuma receber a sinistralidade dos últimos anos do grupo na seguradora
+atual (sinistros e capital segurado por ano, agregados). Se ela vier, entra com a mesma credibilidade da renovação:
+fator = Z x A/E + (1 - Z), Z = n_ef / (n_ef + k), com o k de Bühlmann-Straub estimado na carteira.
 taxa comercial = taxa pura x (1 + margem) / (1 - carregamentos)
 Usa a tabela de fatores da taxa manual (`artefatos/fatores_manual.yaml`) e a mesma regra de pooling da renovação.
 Não exige R.
@@ -15,10 +19,26 @@ from .renovacao import custo_manual_censo, niveis_pooling
 from .tabua import Tabua
 
 
+def fator_historico(historico: pd.DataFrame, custo_lim_atual: float, capital_atual: float, n_ef_ano: float,
+                    k: float) -> dict:
+    """Credibilidade da experiência anterior do grupo. `historico`: uma linha por ano com `sinistros` (R$, de
+    preferência já limitados ao nível de pooling) e, opcionalmente, `capital` segurado no ano. O esperado de cada ano é
+    o custo atual na taxa manual escalado pelo capital do ano; n_ef cresce com o número de anos."""
+    h = historico.copy()
+    escala = (h["capital"].to_numpy(float) / capital_atual) if "capital" in h else np.ones(len(h))
+    esperado = float(custo_lim_atual * escala.sum())
+    ae = float(h["sinistros"].sum() / esperado) if esperado > 0 else 1.0
+    n_ef = n_ef_ano * float(escala.sum())
+    z = n_ef / (n_ef + k) if np.isfinite(k) else 0.0
+    return {"anos": len(h), "A/E historico": ae, "n_ef historico": n_ef, "Z": z, "fator": z * ae + (1 - z)}
+
+
 def cotar(censo: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela: dict, tabua: Tabua,
-          data_inicio_vigencia, cfg_cotador: dict, cfg_renovacao: dict) -> dict:
+          data_inicio_vigencia, cfg_cotador: dict, cfg_renovacao: dict, historico: pd.DataFrame | None = None,
+          k_credibilidade: float | None = None) -> dict:
     """`censo`: uma linha por vida com data_nascimento, sexo e capital (o formato da aba `vidas` do template).
-    Devolve taxas (anual e mensal, por mil), prêmios, decomposição do custo e alertas."""
+    `historico` (opcional): sinistralidade anterior do grupo, com `k_credibilidade` (k de Bühlmann-Straub da carteira).
+    Devolve taxas (anual e mensal, por mil), prêmios, decomposição do custo, experiência e alertas."""
     d = pd.Timestamp(data_inicio_vigencia)
     v = censo.copy()
     v["id_estipulante"], v["data_inicio"], v["data_fim"] = "COTACAO", d, pd.NaT
@@ -27,7 +47,11 @@ def cotar(censo: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela
     est = pd.DataFrame({"id_estipulante": ["COTACAO"], "cnae_secao": [cnae_secao], "cnae_divisao": [cnae_divisao]})
     P = niveis_pooling(v, d, cfg_renovacao["pooling"])
     custo = custo_manual_censo(v, est, tabua, tabela, P, d).iloc[0]
-    puro = float(custo["custo_manual_lim"] + custo["encargo_pooling"])
+    exp = {"fator": 1.0, "Z": 0.0}
+    if historico is not None and len(historico) and k_credibilidade is not None:
+        exp = fator_historico(historico, float(custo["custo_manual_lim"]), float(custo["capital"]),
+                              float(custo["n_ef"]), k_credibilidade)
+    puro = float(custo["custo_manual_lim"] * exp["fator"] + custo["encargo_pooling"])
     cap = float(custo["capital"])
     c = cfg_cotador
     carga = sum(c["carregamentos"].values())
@@ -37,7 +61,7 @@ def cotar(censo: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela
         "custo_esperado_limitado": float(custo["custo_manual_lim"]), "encargo_pooling": float(custo["encargo_pooling"]),
         "premio_puro_anual": puro, "premio_comercial_anual": comercial,
         "taxa_pura_mensal_mil": 1000 * puro / cap / 12, "taxa_comercial_mensal_mil": 1000 * comercial / cap / 12,
-        "carregamento_total": carga, "alertas": alertas(v, d, c["alertas"]),
+        "carregamento_total": carga, "experiencia": exp, "alertas": alertas(v, d, c["alertas"]),
     }
 
 

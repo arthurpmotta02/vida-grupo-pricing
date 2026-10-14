@@ -1,3 +1,4 @@
+import numpy as np
 """Casos 'golden': resultados conferidos à mão."""
 import pandas as pd
 import pytest
@@ -79,3 +80,23 @@ def test_janela_corta_exposicao_anterior(tabua_constante):
     v = _vidas([["V1", "1980-06-15", "M", "2022-03-01", None, 100000.0]])
     det = exposicao_detalhada(v, _estip(), tabua_constante, "2023-12-31", data_inicio="2023-03-01")
     assert det["dias"].sum() == 306 and det["idade"].tolist() == [42]   # só o 2º ano-apólice, idade em 01/03/2023
+
+
+def test_proporcao_masculina_usa_o_nivel_mais_fino_com_dados():
+    from vgpricing.exposicao import proporcao_masculina
+    d = pd.DataFrame({"id_estipulante": ["A", "A", "A", "B", "B", "C"],
+                      "cnae_secao": ["F", "F", "F", "F", "F", "K"],
+                      "idade": [35, 36, 37, 35, 38, 40],
+                      "sexo": ["M", "M", None, None, None, None]})
+    p = proporcao_masculina(d)
+    assert p[2] == 1.0                     # grupo A, mesma faixa: só homens
+    assert p[3] == 1.0 and p[4] == 1.0     # grupo B sem sexo: seção F, faixa 30-39
+    assert p[5] == 0.5                     # seção K, faixa 40-49: nenhum nível com dado -> 0,5
+    assert np.all((p >= 0) & (p <= 1))
+
+
+def test_q_com_sexo_ausente_usa_a_mistura(tabua_constante):
+    t = tabua_constante
+    q = t.q(np.array([40, 40]), np.array([None, None], dtype=object), np.array([1.0, 0.0]))
+    assert q[0] == pytest.approx(t.q(np.array([40]), np.array(["M"], dtype=object))[0])
+    assert q[1] == pytest.approx(t.q(np.array([40]), np.array(["F"], dtype=object))[0])

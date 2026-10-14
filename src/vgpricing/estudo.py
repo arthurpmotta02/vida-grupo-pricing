@@ -69,15 +69,18 @@ def grafico_ae(ax, t: pd.DataFrame, rotulo: str, titulo: str = "", col_valor: bo
 
 
 def agrupar_niveis_raros(df: pd.DataFrame, var: str, peso: str = "E", minimo: float = 30.0, ordenado: bool = True,
-                         desconhecidos: tuple[str, ...] = ("unknown", "desconhecid", "nd")) -> tuple[pd.Series, dict]:
+                         desconhecidos: tuple[str, ...] = ("unknown", "desconhecid", "nd"),
+                         sempre_outros: bool = False) -> tuple[pd.Series, dict]:
     """Agrupa níveis com pouca experiência (CAS Monograph 5, seção 5.5), para que todo nível do modelo tenha
     pelo menos `minimo` de `peso` (por padrão, óbitos esperados: com 30, o IC de 95% do A/E tem cerca de ±36%).
 
     - Níveis "desconhecidos" raros vão para o nível de maior peso (não são uma faixa real).
     - Variável ordenada (faixas): o nível mais raro se junta ao vizinho de menor peso, até todos passarem do mínimo.
-    - Variável sem ordem: níveis raros vão para "OUTROS"; se "OUTROS" continuar raro, vai para o de maior peso.
+    - Variável sem ordem: níveis raros vão para "OUTROS"; se "OUTROS" continuar raro, vai para o de maior peso
+      (salvo `sempre_outros=True`, quando o rótulo "OUTROS" tem significado próprio, como "seção sem experiência").
     Devolve (nova coluna, mapa nível original -> nível agrupado)."""
     x = df[var].astype(str)
+    rotulo_outros = "OUTRAS" if sempre_outros else "OUTROS"
     pesos = df.groupby(x)[peso].sum()
     niveis = list(pesos.index) if not ordenado else sorted(pesos.index)
     mapa = {n: n for n in niveis}
@@ -104,9 +107,9 @@ def agrupar_niveis_raros(df: pd.DataFrame, var: str, peso: str = "E", minimo: fl
     else:
         raros = [n for n in reais if pesos[n] < minimo]
         if raros:
-            if pesos[raros].sum() >= minimo:
+            if sempre_outros or pesos[raros].sum() >= minimo:
                 for n in raros:
-                    mapa[n] = "OUTROS"
+                    mapa[n] = rotulo_outros
             else:
                 for n in raros:
                     mapa[n] = modal

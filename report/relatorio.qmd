@@ -56,7 +56,7 @@ que ele não viu (ASOP 56; monografia nº 5 da CAS). Os números abaixo vêm dos
 ## Taxa manual: candidatos no ano de teste
 
 ```{python}
-c = pd.read_csv(res / "03b_comparacao_teste.csv")
+c = pd.read_csv(res / "taxa_manual_comparacao_teste.csv")
 c[["modelo", "papel", "deviance", c.columns[2], "IC95 inf", "IC95 sup", "significativa", "escolhido"]]
 ```
 
@@ -69,13 +69,13 @@ interações são referências de desempenho, não tarifa.
 Prevendo a sinistralidade de cada seguradora no ramo vida no ano seguinte (SUSEP SES), em anos normais:
 
 ```{python}
-pd.read_csv(res / "05_credibilidade_ses.csv")
+pd.read_csv(res / "renovacao_ses.csv")
 ```
 
 ## Renovação: backtest com vários anos-alvo
 
 ```{python}
-pd.read_csv(res / "05_backtest_renovacao.csv")
+pd.read_csv(res / "renovacao_backtest.csv")
 ```
 
 Diferença negativa contra "só taxa manual" com intervalo abaixo de zero: o método prevê melhor que ignorar a experiência
@@ -91,7 +91,7 @@ s.to_frame()
 # Monitoramento
 
 ```{python}
-pd.read_csv(res / "07_gatilhos.csv")
+pd.read_csv(res / "operacao_gatilhos.csv")
 ```
 
 # Limitações
@@ -109,8 +109,8 @@ pd.read_csv(res / "07_gatilhos.csv")
 | Qualidade e rastreabilidade dos dados (log de exceções, regras versionadas) | notebook 01, `config/base.yaml` | ASOP 23 |
 | Fontes externas identificadas e conferidas (tábua por hash; SOA reproduzida contra o relatório) | `data/external`, `tests/test_publicos.py` | ASOP 23 |
 | Premissas documentadas com tipo de justificativa | README, tabela de parâmetros | ASOP 25, 56 |
-| Validação fora do tempo e comparação com alternativa | notebooks 03b e 05 | ASOP 56 |
-| Credibilidade com equilíbrio entre responsividade e estabilidade | notebooks 04 e 05 | ASOP 25 |
-| Controle de mudanças (champion/challenger, versionamento) | notebook 07, git | ASOP 56 |
-| Monitoramento com gatilhos | notebook 07, `config/monitoramento.yaml` | ASOP 56 |
+| Validação fora do tempo e comparação com alternativa | notebooks 04 e 05 | ASOP 56 |
+| Credibilidade com equilíbrio entre responsividade e estabilidade | notebook 05 | ASOP 25 |
+| Controle de mudanças (champion/challenger, versionamento) | notebook 06, git | ASOP 56 |
+| Monitoramento com gatilhos | notebook 06, `config/monitoramento.yaml` | ASOP 56 |
 | Proteção de dados pessoais | `.gitignore`, `io.hash_id` | LGPD |

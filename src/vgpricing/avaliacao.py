@@ -155,6 +155,19 @@ def tabela_am(df: pd.DataFrame, por: str | list[str], pred: str, obs: str = "N",
     return t.reset_index(drop=True)
 
 
+def sinistralidade_por_faixa(df: pd.DataFrame, pred: str, premio: str, sinistro: str, n: int = 5) -> pd.DataFrame:
+    """Gráfico de sinistralidade (CAS 7.2.3): ordena pela relatividade prevista pelo modelo (custo previsto ÷
+    prêmio atual) e mostra a sinistralidade observada sob o prêmio atual em faixas de igual prêmio. Se ela sobe com
+    a faixa, o preço atual não acompanha o risco que o modelo enxerga."""
+    w = df[premio].to_numpy(float)
+    f = _faixas_iguais(df[pred].to_numpy(float) / w, w, n)
+    g = pd.DataFrame({"faixa": f, "premio": w, "sinistro": df[sinistro].to_numpy(float),
+                      "previsto": df[pred].to_numpy(float)}).groupby("faixa").sum()
+    g["sinistralidade observada"] = g["sinistro"] / g["premio"]
+    g["sinistralidade prevista"] = g["previsto"] / g["premio"]
+    return g
+
+
 # ----------------------------------------------------------------------------- gráficos
 
 def grafico_quantis(ax, q: pd.DataFrame, titulo: str):
