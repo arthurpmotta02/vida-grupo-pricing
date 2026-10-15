@@ -92,3 +92,15 @@ def fator_desenvolvimento(sinistros: pd.DataFrame, data_avaliacao, fim, inicio=N
     idade = ((aval.year - m.dt.year) * 12 + aval.month - m.dt.month + 1).to_numpy()
     # cada sinistro avisado com idade a representa 1/p(a) sinistros finais: fator = média de 1/p
     return float((1.0 / (1.0 - fracao_nao_avisada(idade, pad))).mean())
+
+
+def proporcao_avisada_periodo(padrao: pd.DataFrame, inicio, fim, data_avaliacao) -> float:
+    """Proporção esperada dos sinistros ocorridos entre `inicio` e `fim` que já estaria avisada em `data_avaliacao`,
+    pelo padrão de aviso (exposição uniforme no período). Completa o histórico informado por outra seguradora."""
+    ini, fim, aval = pd.Timestamp(inicio), pd.Timestamp(fim), pd.Timestamp(data_avaliacao)
+    meses = pd.period_range(ini.to_period("M"), min(fim, aval).to_period("M"), freq="M")
+    if len(meses) == 0:
+        return 1.0
+    dias = np.array([(min(m.end_time.normalize(), fim, aval) - max(m.start_time, ini)).days + 1 for m in meses], float)
+    idade = np.array([(aval.year - m.year) * 12 + aval.month - m.month + 1 for m in meses])
+    return float(np.average(1.0 - fracao_nao_avisada(idade, padrao), weights=np.clip(dias, 0, None)))

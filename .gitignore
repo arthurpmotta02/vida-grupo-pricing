@@ -17,3 +17,8 @@ report/_output/
 *.egg-info/
 report/*.html
 report/*_files/
+# arquivos auxiliares do LaTeX (o PDF é versionado)
+docs/*.aux
+docs/*.log
+docs/*.toc
+docs/*.out

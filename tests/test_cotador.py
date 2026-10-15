@@ -55,3 +55,12 @@ def test_historico_do_grupo_entra_com_credibilidade(tabua_constante):
     assert muita["experiencia"]["A/E historico"] == pytest.approx(2.0)
     assert muita["premio_puro_anual"] == pytest.approx(2 * base["premio_puro_anual"], rel=1e-3)  # Z ~ 1
     assert 0 < cotar(censo, "N", "81", _tabela(), tabua_constante, "2026-01-01", cc, cr, hist, k_credibilidade=0.5)["experiencia"]["Z"] < 1
+
+
+def test_completar_ibnr_eleva_o_ultimo_ano():
+    from vgpricing.cotador import completar_ibnr
+    pad = pd.DataFrame({"idade_meses": [1, 2, 3, 4], "proporcao_avisada": [0.2, 0.6, 0.9, 1.0]})
+    h = pd.DataFrame({"inicio": [T("2023-01-01"), T("2025-10-01")], "fim": [T("2023-12-31"), T("2025-12-31")]})
+    r = completar_ibnr(h, pad, "2026-01-01")
+    assert r.loc[0, "proporcao_avisada"] == pytest.approx(1.0)
+    assert 0.2 < r.loc[1, "proporcao_avisada"] < 0.9                      # out-dez: idades 2 a 4 em jan

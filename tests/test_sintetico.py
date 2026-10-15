@@ -77,3 +77,15 @@ def test_choque_pandemico_so_nos_dias_do_ano():
     d2 = ((t >= 184) & (t < 365)).sum() / (t >= 184).sum()
     assert abs(d1 - (1 - np.exp(-0.5 * 2 * 184 / 365.25))) < 0.005
     assert abs(d2 - (1 - np.exp(-0.5 * 181 / 365.25))) < 0.005
+
+
+def test_pacotes_de_cotacao(cfg_sint_pequeno, tabua):
+    from vgpricing.sintetico import gerar_pacotes_cotacao
+    from vgpricing.config import carregar_config
+    p = gerar_pacotes_cotacao(cfg_sint_pequeno, tabua, n_grupos=8, anos_historico=3,
+                              cfg_pooling=carregar_config("renovacao")["pooling"])
+    assert len(p["estipulantes"]) == 8 and p["historico"].groupby("id_estipulante").size().eq(3).all()
+    assert (p["historico"]["sinistros_limitados"] <= p["historico"]["sinistros"] + 1e-9).all()
+    e = p["estipulantes"].set_index("id_estipulante")
+    c = p["censos"].merge(e[["data_cotacao"]], left_on="id_estipulante", right_index=True)
+    assert (c["data_nascimento"] < c["data_cotacao"]).all() and set(p["realizado"]["id_estipulante"]) == set(e.index)

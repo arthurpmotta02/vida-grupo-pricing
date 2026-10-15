@@ -4,7 +4,7 @@
 estudo de experiência, taxa manual sobre a tábua com fatores de risco, renovação com credibilidade, validação fora do
 tempo, cotação e monitoramento. Métodos maduros, um pacote por tarefa e cada número de decisão justificado.
 
-📄 **Guia de notação, teoria e comparação de métodos:** [PDF](docs/notacao.pdf) · [Markdown](docs/notacao.md)
+📄 **Guia de notação, teoria e comparação de métodos:** [PDF](docs/notacao.pdf) · [fonte LaTeX](docs/notacao.tex)
 📊 **Relatório para a gestão:** [`report/relatorio.qmd`](report/relatorio.qmd) (`quarto render`)
 
 | | |
@@ -56,7 +56,7 @@ flowchart LR
 | [`03_modelo_mercado_soa`](notebooks/03_modelo_mercado_soa.ipynb) | O que o framework da SOA mostra em dados reais de vida em grupo? | GLM, AGLM, GAM, elastic net, LightGBM comparados; forma dos efeitos usada como priori |
 | [`04_taxa_manual`](notebooks/04_taxa_manual.ipynb) | Qual a taxa de um grupo novo? | política para o ano de choque; candidatos no teste fora do tempo; decisão; estabilidade; tabela de fatores |
 | [`05_renovacao`](notebooks/05_renovacao.ipynb) | Quanto reajustar na renovação, e com quanta credibilidade? | pooling, IBNR, credibilidade, reajuste; validação no SES e backtest com vários anos-alvo |
-| [`06_operacao`](notebooks/06_operacao.ipynb) | Como cotar e acompanhar no dia a dia? | cotação (com histórico do grupo), alertas, monitoramento e gatilhos |
+| [`06_operacao`](notebooks/06_operacao.ipynb) | Como cotar e acompanhar no dia a dia? | cotação (com histórico do grupo, validada em grupos novos simulados), alertas, monitoramento e gatilhos |
 | [`90_validacao_sintetica`](notebooks/90_validacao_sintetica.ipynb) | O código recupera a verdade quando ela é conhecida? | testes de software contra o gerador |
 
 ## Metodologia
@@ -118,9 +118,12 @@ sinistralidade sobe de ~46% para ~61% do menor para o maior risco técnico: o pr
 
 ### 6. Operação (06)
 
-Cotação do censo à taxa comercial (pooling, carregamentos, alertas), agora com o **histórico do grupo** que a
-subscrição recebe da seguradora anterior, ponderado pela mesma credibilidade da renovação. Monitoramento mensal com
-limites exatos de Poisson e funnel plot com a variância entre grupos.
+Cotação do censo à taxa comercial (pooling, carregamentos, alertas) e com o **histórico do grupo** que a subscrição
+recebe da seguradora anterior (sinistros avisados por ano), completado pelo IBNR e ponderado pela mesma credibilidade
+da renovação. A cotação com histórico é **validada** em 400 grupos novos simulados como chegam à subscrição (censo +
+histórico), contra o ano seguinte que ela não vê: usar só o histórico é muito pior que a taxa manual; com credibilidade,
+o histórico melhora a previsão, com o ganho concentrado nos grupos grandes; completar o IBNR corrige o viés de nível.
+Monitoramento mensal com limites exatos de Poisson e funnel plot com a variância entre grupos.
 
 <p float="left">
   <img src="docs/figuras/operacao_monitoramento.png" width="49%" />
@@ -138,6 +141,7 @@ Entre tudo o que foi testado, o que vale levar para a operação, e com que pape
 | **Estrutura faltando** | **LightGBM**, na revisão anual | na SOA, sem os grupos gigantes, foi o único a achar estrutura significativa além do GLM | não vira tarifa: não é explicável fator a fator |
 | **Fora da tarifa** | — | GLMM como taxa de grupo novo fica significativamente pior; sua ideia (variância entre grupos) é usada na renovação e no monitoramento | elastic net com interações: referência; bayesiano completo: fora do escopo |
 | **Renovação** | **Bühlmann-Straub** + pooling + IBNR (Bornhuetter-Ferguson) | credibilidade significativamente melhor que só a manual; k estimado nos dados; peso pelo número efetivo | a regra de mercado também foi significativamente melhor que só a manual (numericamente até um pouco melhor); a escolha final entre as duas é do champion/challenger na base real |
+| **Cotação de grupo com histórico** | Taxa manual + histórico com credibilidade (k da carteira), sinistros limitados ao pooling e completados pelo IBNR | validado em grupos novos simulados: melhor que só a manual nos grupos grandes; corrige o viés do último ano incompleto | só o histórico: muito pior (significativo) |
 | **Monitoramento** | Funnel plot com variância entre grupos + gatilhos | limites corretos para vida em grupo | — |
 | **Dados faltantes** | Mistura pela proporção de homens; imputação do nascimento com indicador | exato para o esperado; não perde exposição; auditável | excluir registros ou usar 50/50 enviesa quando a ausência se concentra |
 
@@ -235,6 +239,13 @@ Rscript r/instalar_pacotes.R          # R >= 4.2 com glmmTMB, glmnet, actuar e j
 pytest                                # testes que dependem de R ou de arquivos externos são pulados se faltarem
 jupyter lab                           # notebooks na ordem 01 a 06; o 90 é opcional
 quarto render report/relatorio.qmd    # depois dos notebooks (lê artefatos/ e resultados/)
+```
+
+**Guia de notação (PDF).** O PDF já está em `docs/notacao.pdf`. Para recompilar depois de editar `docs/notacao.tex`
+(TeX Live ou MiKTeX; duas passadas, para o sumário):
+
+```bash
+cd docs && xelatex notacao.tex && xelatex notacao.tex
 ```
 
 **Dados públicos (SOA e SES).** Não são versionados. Baixe o zip das tabelas da SOA

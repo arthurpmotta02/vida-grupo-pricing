@@ -196,9 +196,10 @@ def custo_manual_censo(vidas_ativas: pd.DataFrame, estipulantes: pd.DataFrame, t
     v["custo_lim"] = q * mult * np.minimum(C, P)
     v["encargo_pool"] = q * mult * np.maximum(C - P, 0.0)
     v["c2q"] = q * mult * np.minimum(C, P) ** 2
+    v["qm"] = q * mult
     g = v.groupby("id_estipulante").agg(vidas=("id_vida", "count"), capital=("capital", "sum"),
                                         custo_manual_lim=("custo_lim", "sum"), encargo_pooling=("encargo_pool", "sum"),
-                                        c2q=("c2q", "sum"))
+                                        c2q=("c2q", "sum"), obitos_esperados=("qm", "sum"))
     g["n_ef"] = g["custo_manual_lim"] ** 2 / g["c2q"]       # número efetivo de óbitos por ano (valor limitado)
     return g.drop(columns="c2q")
 

@@ -354,6 +354,48 @@ def injetar_sujeira(dados: dict[str, pd.DataFrame], cfg: dict) -> tuple[dict[str
     return out, v
 
 
+def gerar_pacotes_cotacao(cfg: dict, tabua: Tabua, n_grupos: int = 150, anos_historico: int = 3,
+                          cfg_pooling: dict | None = None) -> dict:
+    """Grupos novos como chegam à subscrição, para validar a cotação fora do tempo.
+
+    Simula grupos que NÃO estão na carteira (outra semente), com `anos_historico` + 2 anos de vida: os primeiros
+    `anos_historico` anos-apólice são o histórico na seguradora anterior; o seguinte é o ano cotado; o último só
+    existe para que os sinistros do ano cotado estejam avisados. A cotação recebe só o que a subscrição recebe:
+    - `censos`: vidas ativas na data da cotação (nascimento, sexo, capital);
+    - `historico`: por ano, sinistros AVISADOS até a data da cotação (sem IBNR, como a seguradora anterior informa),
+      também limitados ao nível de pooling do grupo, e o capital segurado no início do ano.
+    A verdade fica à parte, em `realizado`: óbitos e valor ocorridos no ano cotado."""
+    from .renovacao import niveis_pooling
+    c = {**cfg, "n_estipulantes": n_grupos, "anos_historico": [anos_historico + 2] * 2, "semente": cfg["semente"] + 100}
+    cart = gerar_carteira(c, tabua)
+    est, v, s = cart["estipulantes"], cart["vidas"], cart["sinistros"].copy()
+    s["valor"] = s["valor_indenizado"].fillna(0) + s["valor_reserva"].fillna(0)
+    censos, hist, real, datas = [], [], [], {}
+    for _, e in est.iterrows():
+        g, ini = e["id_estipulante"], pd.Timestamp(e["data_inicio_vigencia"])
+        d_cot = ini + pd.DateOffset(years=anos_historico)
+        vg, sg = v[v["id_estipulante"] == g], s[s["id_estipulante"] == g]
+        ativo = lambda d: vg[(vg["data_inicio"] <= d) & (vg["data_fim"].isna() | (vg["data_fim"] >= d))]
+        censo = ativo(d_cot)[["id_estipulante", "id_vida", "data_nascimento", "sexo", "capital"]]
+        P = float(niveis_pooling(censo.assign(data_inicio=d_cot, data_fim=pd.NaT), d_cot, cfg_pooling).iloc[0]) \
+            if cfg_pooling and len(censo) else np.inf
+        for k in range(anos_historico):
+            a, b = ini + pd.DateOffset(years=k), ini + pd.DateOffset(years=k + 1) - pd.Timedelta(days=1)
+            sk = sg[(sg["data_ocorrencia"] >= a) & (sg["data_ocorrencia"] <= b) & (sg["data_aviso"] < d_cot)]
+            hist.append({"id_estipulante": g, "ano": k + 1, "inicio": a, "fim": b, "n_sinistros": len(sk),
+                         "sinistros": float(sk["valor"].sum()),
+                         "sinistros_limitados": float(np.minimum(sk["valor"], P).sum()),
+                         "capital": float(ativo(a)["capital"].sum())})
+        fim = d_cot + pd.DateOffset(years=1) - pd.Timedelta(days=1)
+        sr = sg[(sg["data_ocorrencia"] >= d_cot) & (sg["data_ocorrencia"] <= fim)]
+        real.append({"id_estipulante": g, "N": len(sr), "valor": float(sr["valor"].sum())})
+        censos.append(censo)
+        datas[g] = d_cot
+    return {"estipulantes": est.assign(data_cotacao=est["id_estipulante"].map(datas)),
+            "censos": pd.concat(censos, ignore_index=True), "historico": pd.DataFrame(hist),
+            "realizado": pd.DataFrame(real), "verdade": cart["verdade_estipulantes"]}
+
+
 def tabelas_de_entrada(dados: dict) -> dict:
     """Só as 4 tabelas que uma seguradora teria (sem as de verdade)."""
     return {k: dados[k] for k in ("estipulantes", "vidas", "sinistros", "premios")}

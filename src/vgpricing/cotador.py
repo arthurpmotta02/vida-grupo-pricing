@@ -27,10 +27,21 @@ def fator_historico(historico: pd.DataFrame, custo_lim_atual: float, capital_atu
     h = historico.copy()
     escala = (h["capital"].to_numpy(float) / capital_atual) if "capital" in h else np.ones(len(h))
     esperado = float(custo_lim_atual * escala.sum())
-    ae = float(h["sinistros"].sum() / esperado) if esperado > 0 else 1.0
+    # sinistros ainda não avisados na data da cotação (IBNR): divide pela proporção já avisada, se informada
+    sinistros = h["sinistros"] / h["proporcao_avisada"].clip(lower=0.05) if "proporcao_avisada" in h else h["sinistros"]
+    ae = float(sinistros.sum() / esperado) if esperado > 0 else 1.0
     n_ef = n_ef_ano * float(escala.sum())
     z = n_ef / (n_ef + k) if np.isfinite(k) else 0.0
     return {"anos": len(h), "A/E historico": ae, "n_ef historico": n_ef, "Z": z, "fator": z * ae + (1 - z)}
+
+
+def completar_ibnr(historico: pd.DataFrame, padrao: pd.DataFrame, data_cotacao) -> pd.DataFrame:
+    """Acrescenta ao histórico (com `inicio` e `fim` de cada ano) a proporção dos sinistros que já deveria estar avisada
+    na data da cotação, pelo padrão de aviso da carteira. O último ano costuma estar incompleto."""
+    from .ibnr import proporcao_avisada_periodo
+    h = historico.copy()
+    h["proporcao_avisada"] = [proporcao_avisada_periodo(padrao, a, b, data_cotacao) for a, b in zip(h["inicio"], h["fim"])]
+    return h
 
 
 def cotar(censo: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela: dict, tabua: Tabua,
@@ -58,6 +69,8 @@ def cotar(censo: pd.DataFrame, cnae_secao: str, cnae_divisao: str | None, tabela
     comercial = puro * (1 + c["margem_seguranca"]) / (1 - carga)
     return {
         "vidas": int(custo["vidas"]), "capital_total": cap, "nivel_pooling": float(P.iloc[0]),
+        "obitos_esperados_manual": float(custo["obitos_esperados"]),
+        "obitos_previstos": float(custo["obitos_esperados"] * exp["fator"]),
         "custo_esperado_limitado": float(custo["custo_manual_lim"]), "encargo_pooling": float(custo["encargo_pooling"]),
         "premio_puro_anual": puro, "premio_comercial_anual": comercial,
         "taxa_pura_mensal_mil": 1000 * puro / cap / 12, "taxa_comercial_mensal_mil": 1000 * comercial / cap / 12,
